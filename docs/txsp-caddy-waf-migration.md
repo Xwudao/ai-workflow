@@ -58,6 +58,9 @@ SHA-256：
   install -m 640 -o caddy -g caddy /dev/null /var/log/caddy/waf.json
   ```
 
+- 已将 WAF 日志级别调整为 `warn`，避免 `info` 级别记录每个正常请求。
+- 已配置 `/etc/logrotate.d/caddy-waf`：每天轮转、达到 50 MiB 提前轮转、保留 14 份并压缩；使用 `copytruncate`，无需重启 Caddy。
+
 - 修改 WAF 规则或 IP 黑白名单时，文件监听会自动热加载。
 - 修改 Caddyfile 时使用 `systemctl reload caddy`。
 - 更换二进制或 Go 模块实现时必须 `systemctl restart caddy`，不能只 reload。

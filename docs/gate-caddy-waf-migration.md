@@ -96,6 +96,15 @@ xcaddy build v2.11.4 \
   --with github.com/mholt/caddy-dynamicdns@v0.0.0-20260805195708-67d107a42c02
 ```
 
+## 规则评估（2026-09-06）
+
+当前规则覆盖 SQLi、XSS、路径穿越、敏感文件、RCE、SSRF、NoSQL 注入、Log4Shell、Java 反序列化与常见扫描器，基础覆盖已足够。后续优先级应是调优与访问控制，而不是盲目增加大量正则。
+
+- `legacy-user-agent-1` 是旧规则迁移而来，包含 `python`、`Java`、`axios`、若干旧 Chrome 版本及大量爬虫标识等宽泛匹配；启用后的约 27 分钟内已触发 132 次拦截。确认其不会误伤合法客户端前，不宜继续扩大该类 UA 黑名单。
+- WAF 当前未启用速率限制。若要启用基于真实客户端 IP 的限流，gate 位于多层代理之后，必须先确认并严格配置 `trusted_proxies`，否则会按 txsp/CDN 节点限流，可能造成所有用户被连带阻断。
+- WAF 仅部署在 `:3001`、`:3006`、`:3010`；其余公开 Caddy 路由未受新版 WAF 保护。建议逐站点以日志观察方式纳入，而非一次性全量启用。
+- `max_request_body_size` 为 1 MiB；适合普通 API，但超过该大小的请求仅有前 1 MiB 被检查。上传型接口应结合业务允许的大小另行设限。
+
 ## 运维说明
 
 - 修改 `/etc/caddy/waf/rules.json`、`legacy-rules.json`、IP 黑名单后，WAF 文件监听会热加载。
@@ -117,5 +126,8 @@ xcaddy build v2.11.4 \
   ```bash
   sudo install -m 640 -o caddy -g caddy /dev/null /var/log/caddy/waf.json
   ```
+
+- 已将 WAF 日志级别调整为 `warn`，仅保留拦截与错误等重要事件；`info` 会记录大量正常请求。
+- 已配置 `/etc/logrotate.d/caddy-waf`：每天轮转、单文件达到 50 MiB 时提前轮转、保留 14 份并压缩。因 WAF 直接追加写文件，规则使用 `copytruncate`，无需重启 Caddy 即可轮转。
 
 - 回滚时恢复备份中的二进制和 `Caddyfile`，然后重启 Caddy。

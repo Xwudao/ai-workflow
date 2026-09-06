@@ -113,6 +113,25 @@ flowchart LR
 
 因此 `hunhepan` 请求会经过两次**新版** WAF：先 txsp，再到 gate。
 
+## WAF 的客户端 IP 语义
+
+`fabriziosalmi/caddy-waf` 区分“直连对端 IP”和“可信代理传来的客户端 IP”。gate 与 txsp 当前都**未配置** `trusted_proxies`，因此：
+
+- 限流、GeoIP / ASN 和规则目标 `REMOTE_IP` 使用 TCP 直连对端 `RemoteAddr`。
+- 对经 txsp 到达 gate 的请求，这通常是 txsp 的出口 / NAT IP，而不是最终访问者；直接到达 gate 的请求则是其直连 CDN 节点或客户端。
+- 当前 IP 黑名单是例外：它会检查直连对端，且额外检查所有 `X-Forwarded-For` 值。因此正确传递的真实客户端 IP 仍可命中黑名单；伪造一个已被拉黑的 XFF 地址只会让攻击者自己被拦截，不能绕过对端 IP 检查。
+- IP 白名单只检查直连对端，绝不信任 XFF；在多层代理后不能用它表达“放行某个真实客户端”。
+
+在 gate 启用按真实用户的限流、GeoIP、ASN 或 `REMOTE_IP` 规则前，应先确定**直接连接 gate 的可信上游**的固定出口 IP/CIDR，并只配置这些地址，例如：
+
+```caddyfile
+trusted_proxies <仅 txsp/CDN 的直接出口 IP 或 CIDR>
+# 若可信上游提供单 IP 头：
+# client_ip_header CF-Connecting-IP
+```
+
+不得配置 `trusted_proxies 0.0.0.0/0`。更理想的做法是通过云安全组/防火墙限制 gate 的中转端口仅允许 txsp 访问，再将 txsp 的实际出口地址列为可信代理。
+
 ## app3 业务服务
 
 | 端口 | 进程 |
