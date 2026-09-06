@@ -131,3 +131,38 @@ xcaddy build v2.11.4 \
 - 已配置 `/etc/logrotate.d/caddy-waf`：每天轮转、单文件达到 50 MiB 时提前轮转、保留 14 份并压缩。因 WAF 直接追加写文件，规则使用 `copytruncate`，无需重启 Caddy 即可轮转。
 
 - 回滚时恢复备份中的二进制和 `Caddyfile`，然后重启 Caddy。
+
+## 内置 Dashboard（2026-09-06）
+
+已为 `:3001`、`:3006`、`:3010` 上的 WAF 启用 caddy-waf 的只读 Dashboard 和 JSON metrics。Dashboard 显示请求/拦截量、规则命中、来源 IP/国家和近期拦截；不会修改规则或黑白名单。
+
+- 新二进制：Caddy `v2.11.4` + caddy-waf `v0.4.14`，以 `with_ui` 构建标签编译。
+- 当前二进制 SHA-256：`a027867c3821d88ed8e5023ffa5804f13176a5ad672b31c1ac6cda69a972ae26`
+- 配置：每个 WAF 实例使用 `/waf` 和 `/waf_metrics`；三套实例的计数彼此独立。
+- 访问控制：仅允许来自 `127.0.0.1`/`::1` 的请求访问这两个路径；公网实测均为 `404`。因此必须通过 SSH 隧道查看，避免暴露攻击来源、规则命中和流量统计。
+
+本机运行 `scripts/open-gate-waf-dashboard.sh`，随后访问 <http://127.0.0.1:13001/waf>。脚本以前台方式保持 SSH 隧道；按 `Ctrl-C` 或关闭终端会自动停止转发。
+
+```bash
+./scripts/open-gate-waf-dashboard.sh
+```
+
+等效的手工命令：
+
+```bash
+ssh -N -L 127.0.0.1:13001:127.0.0.1:3001 gate
+```
+
+验证结果：`caddy validate` 通过，`caddy.service` 已使用 `restart` 重启并处于 `active`；隧道目标的 `/waf` 与 `/waf_metrics` 均返回 `200`，metrics schema 为 `2`。
+
+本次切换备份位于服务器：
+
+```text
+/root/caddy-waf-ui-backup-20260906-145045
+```
+
+其中包含切换前的 `/etc/caddy/Caddyfile` 和 `/usr/local/sbin/caddy`，并有 `SHA256SUMS`。回滚时恢复这两个文件后执行：
+
+```bash
+sudo systemctl restart caddy
+```
