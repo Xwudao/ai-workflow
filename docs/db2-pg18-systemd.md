@@ -45,6 +45,26 @@ sudo -u postgres psql
 
 已在 `pg_hba.conf` 添加 `app3` 私网地址 `10.0.16.17/32` 的 `scram-sha-256` 规则，并使用 `systemctl reload postgresql@18-main.service` 加载；修改前备份为 `/root/backup/postgresql-18-hba-app3-20260909-180628/pg_hba.conf`。规则语法已由 `pg_hba_file_rules` 验证。腾讯云安全组放行后，已从 app3 成功验证 TCP 连接 `10.0.4.14:5432`。app3 未安装 `psql` 客户端，故未在该机执行 SQL 级密码认证验证。不要放开全部来源。
 
+## go-forge 角色与数据库
+
+> 完成时间：2026-09-17
+
+已在 `18/main` 中创建服务账号与库（均为普通权限，无 SUPERUSER/CREATEDB/CREATEROLE）：
+
+| 项 | 值 |
+| --- | --- |
+| 角色 | `go-forge`（LOGIN，SCRAM-SHA-256 密码） |
+| 数据库 | `go-forge`，owner `go-forge` |
+| 编码 / 排序 | UTF8 / `C.UTF-8`（template1 默认） |
+
+验证：本机 TCP（`127.0.0.1:5432`）密码认证 `current_user`/`current_database` 正确，且 `go-forge` 在 `public` schema 可建表（建表后已删除）。
+
+- 密码不记录在本文档；明文仅保存在 db2 的 root-only 文件 `/root/backup/postgresql-18-create-go-forge-20260917-190941/password.txt`（权限 600），使用后建议移入密钥管理并删除。
+- 变更前全局角色元数据备份：`/root/backup/postgresql-18-create-go-forge-20260917-190941/globals-before.sql`。
+- 连接串示例：`postgres://go-forge:<password>@10.0.4.14:5432/go-forge`（主机名/端口按实际网络填写）。
+- 访问来源：`pg_hba.conf` 目前仅放行 `127.0.0.1/32`、`::1/128` 与 app3 私网 `10.0.16.17/32`（scram-sha-256）。若 go-forge 部署在其他主机，需新增对应私网 IP 的 hba 规则并 `reload`，不要放开全部来源。
+- 回滚：`DROP DATABASE "go-forge"; DROP ROLE "go-forge";`（执行前确认已备份业务数据）。
+
 ## 变更与备份
 
 安装前的 APT 源及 keyring 状态已备份在：
