@@ -14,7 +14,13 @@ node_modules/
 # build output
 dist/
 build/
+.playwright-cli/
 
 # logs & os
 *.log
 .DS_Store
+
+# local ssh key material — never commit
+ssh-backup-*/
+tmp_ssh_ed25519*
+
