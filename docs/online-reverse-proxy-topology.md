@@ -1,16 +1,18 @@
-# 线上服务反向代理拓扑（app3 / gate / txsp）
+# 线上服务反向代理拓扑（app3 / gate / txsp2）
 
 > 采集时间：2026-09-06。本文基于三台服务器当前的监听端口、进程和 Caddyfile；不包含 DNS 解析、云防火墙或 CDN 控制台配置，因此公网入口以实际 DNS/CDN 配置为准。
+>
+> **2026-09-25 更新**：公网入口已从轻量服务器 `txsp`（`43.134.116.41`）迁到 CVM `txsp2`（`43.160.224.101`），`txsp` 仍在线作为回滚。迁移细节见 [`txsp-to-txsp2-migration.md`](txsp-to-txsp2-migration.md)。下文标注为 `txsp` 的「入口」角色，迁移后由 `txsp2` 承担（上游端口映射不变）。
 
 ## 一句话总结
 
 ```text
-公网用户 → txsp（HTTP 域名入口）→ gate（中转端口 3001～3016）→ app3（业务进程）
+公网用户 → txsp2（HTTP 域名入口）→ gate（中转端口 3001～3016）→ app3（业务进程）
 ```
 
 其中：
 
-- **txsp** 是主要的公网 HTTP 入口和第一层 Caddy 反代。
+- **txsp2** 是主要的公网 HTTP 入口和第一层 Caddy 反代（2026-09-25 起；`txsp` 保留作回滚）。
 - **gate** 是内网中转 / 汇聚反代层，同时也承载部分直接域名入口；其 `:3001`、`:3006`、`:3010` 已启用新版 WAF。
 - **app3** 不运行 Caddy/Nginx，直接运行各个 Go 后端服务。
 - 部分域名绕过 txsp，直接由 gate 的 `:443` 代理到 app3 或其他远程服务器。
@@ -19,7 +21,8 @@
 
 | 节点 | 内网 IP | 角色 | 关键组件 |
 |---|---:|---|---|
-| `txsp` | `10.3.4.17` | 公网域名入口、第一层反代 | Caddy v2.11.4、`fabriziosalmi/caddy-waf v0.4.14`、v2ray |
+| `txsp2` | `10.3.0.12` | 公网域名入口、第一层反代（2026-09-25 起） | Caddy v2.11.4、`fabriziosalmi/caddy-waf v0.4.14`、v2ray、usque |
+| `txsp` | `10.3.4.17` | 原入口，现保留作回滚（服务仍在运行） | 同上 |
 | `gate` | `10.0.12.17` | 中转反代、部分直接域名入口、WAF | Caddy v2.11.4、`fabriziosalmi/caddy-waf v0.4.14` |
 | `app3` | `10.0.16.17` | 业务应用宿主机 | 多个 Go 服务；无 Caddy/Nginx |
 
@@ -27,7 +30,7 @@
 
 ```mermaid
 flowchart LR
-    U[公网用户 / CDN] --> T[txsp\nCaddy :80 / :443]
+    U[公网用户 / CDN] --> T[txsp2\nCaddy :80 / :443]
     T -->|110.40.167.56:3001~3010| G[gate\nCaddy]
     G -->|10.0.16.17:业务端口| A[app3\nGo 应用]
 
@@ -35,11 +38,13 @@ flowchart LR
     G --> E[外部后端\n139.155.21.35]
 ```
 
-`txsp` 在多个站点中向 `110.40.167.56:<port>` 反代；该地址对应 gate 的对外可访问地址。gate 再向 app3 的私网地址 `10.0.16.17:<port>` 转发。
+`txsp2` 在多个站点中向 `110.40.167.56:<port>` 反代；该地址对应 gate 的对外可访问地址。gate 再向 app3 的私网地址 `10.0.16.17:<port>` 转发。
 
-## txsp → gate → app3：主要公网域名链路
+## txsp2 → gate → app3：主要公网域名链路
 
-| 公网域名（txsp） | txsp 上游 | gate 上游 | app3 服务 / 端口 | WAF 路径 |
+> 该表为 2026-09-06（txsp 时期）采集，端口映射未变；域名入口现由 `txsp2` 承担。
+
+| 公网域名（txsp2） | txsp2 上游 | gate 上游 | app3 服务 / 端口 | WAF 路径 |
 |---|---|---|---|---|
 | `fuxipan.com` / `www.fuxipan.com` | `110.40.167.56:3010` | `10.0.16.17:6655` | `go-fuxipan` | gate 新 WAF |
 | `lzpanx.com` / `www.lzpanx.com` / `panso.me` | `110.40.167.56:3006` | `10.0.16.17:4685` | `go-lzpan` | gate 新 WAF |
@@ -104,33 +109,34 @@ flowchart LR
   - `/etc/caddy/waf/ip_whitelist.txt`
 - 日志：`/var/log/caddy/waf.json`
 
-### txsp：新版 WAF
+### txsp2：新版 WAF
 
 - 模块：`github.com/fabriziosalmi/caddy-waf v0.4.14`
 - 原 `args_rule`、`post_rule`、`user_agent_rule` 规则已迁移为 `/etc/caddy/waf/legacy-rules.json`。
-- 当前导入 WAF 的站点：hunhepan、reman、v2fd。
+- 当前导入 WAF 的站点（2026-09-25 实测）：`lzpanx`、`hunhepan`、`reman`。
+- 配置、`waf/` 规则与证书由 `txsp` 逐字节拷贝而来，行为一致（详见迁移文档）。
 - 规则、黑白名单和日志目录与 gate 一致：`/etc/caddy/waf/`、`/var/log/caddy/waf.json`。
 
-因此 `hunhepan` 请求会经过两次**新版** WAF：先 txsp，再到 gate。
+因此 `hunhepan` 请求会经过两次**新版** WAF：先 txsp2，再到 gate。
 
 ## WAF 的客户端 IP 语义
 
 `fabriziosalmi/caddy-waf` 区分“直连对端 IP”和“可信代理传来的客户端 IP”。gate 与 txsp 当前都**未配置** `trusted_proxies`，因此：
 
 - 限流、GeoIP / ASN 和规则目标 `REMOTE_IP` 使用 TCP 直连对端 `RemoteAddr`。
-- 对经 txsp 到达 gate 的请求，这通常是 txsp 的出口 / NAT IP，而不是最终访问者；直接到达 gate 的请求则是其直连 CDN 节点或客户端。
+- 对经 txsp2 到达 gate 的请求，这通常是 txsp2 的出口 / NAT IP，而不是最终访问者；直接到达 gate 的请求则是其直连 CDN 节点或客户端。
 - 当前 IP 黑名单是例外：它会检查直连对端，且额外检查所有 `X-Forwarded-For` 值。因此正确传递的真实客户端 IP 仍可命中黑名单；伪造一个已被拉黑的 XFF 地址只会让攻击者自己被拦截，不能绕过对端 IP 检查。
 - IP 白名单只检查直连对端，绝不信任 XFF；在多层代理后不能用它表达“放行某个真实客户端”。
 
 在 gate 启用按真实用户的限流、GeoIP、ASN 或 `REMOTE_IP` 规则前，应先确定**直接连接 gate 的可信上游**的固定出口 IP/CIDR，并只配置这些地址，例如：
 
 ```caddyfile
-trusted_proxies <仅 txsp/CDN 的直接出口 IP 或 CIDR>
+trusted_proxies <仅 txsp2/CDN 的直接出口 IP 或 CIDR>
 # 若可信上游提供单 IP 头：
 # client_ip_header CF-Connecting-IP
 ```
 
-不得配置 `trusted_proxies 0.0.0.0/0`。更理想的做法是通过云安全组/防火墙限制 gate 的中转端口仅允许 txsp 访问，再将 txsp 的实际出口地址列为可信代理。
+不得配置 `trusted_proxies 0.0.0.0/0`。更理想的做法是通过云安全组/防火墙限制 gate 的中转端口仅允许 txsp2 访问，再将 txsp2 的实际出口地址（`43.160.224.101`）列为可信代理。
 
 ## app3 业务服务
 
@@ -161,9 +167,9 @@ trusted_proxies <仅 txsp/CDN 的直接出口 IP 或 CIDR>
 
 ## 运维与安全建议
 
-1. **明确入口职责**：建议将 txsp 定义为唯一公网 HTTP 入口，gate 的 `3001～3016` 仅通过云安全组或主机防火墙允许 txsp 访问。
+1. **明确入口职责**：建议将 txsp2 定义为唯一公网 HTTP 入口，gate 的 `3001～3016` 仅通过云安全组或主机防火墙允许 txsp2（`43.160.224.101`）访问。
 2. **app3 已收敛入站访问**：UFW 已启用，默认拒绝入站；仅允许 SSH `4344/tcp` 和 gate（`10.0.12.17`）访问任意 TCP 端口。该策略覆盖未来新增的 gate → app3 TCP 后端，无需逐端口维护。详见 [`app3-network-hardening.md`](app3-network-hardening.md)。
-3. **统一 WAF 策略**：txsp 与 gate 均已使用新版 WAF。建议后续确定一个明确的 WAF 层，避免 hunhepan 的双重检测、其他站点却没有 WAF 的不一致状态。
+3. **统一 WAF 策略**：txsp2 与 gate 均已使用新版 WAF。建议后续确定一个明确的 WAF 层，避免 hunhepan 的双重检测、其他站点却没有 WAF 的不一致状态。
 4. **谨慎处理转发头**：当前多层代理会透传 `X-Forwarded-For`。若后续在新版 WAF 上启用基于真实客户端 IP 的限流、GeoIP 或 ASN 规则，应为可信上游显式配置 `trusted_proxies`，不要无条件信任客户端可伪造的头。
 5. **修复失效上游**：检查 app3 的 `4680` 和 `4677` 服务状态，或暂时下线 gate 对应的 `:3002`、`:3003` 路由，避免持续 502。
 6. **凭据不入库**：Caddyfile 可能含 DNS Provider API Token；本文未记录该类凭据。建议改由环境变量或受限权限的凭据文件注入，并定期轮换。
