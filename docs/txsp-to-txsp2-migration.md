@@ -1,13 +1,13 @@
 # txsp → txsp2 迁移记录（Caddy + WAF + v2ray + usque）
 
 > 执行日期：2026-09-25。目标：把公网入口从轻量服务器 `txsp`（`43.134.116.41`）迁到 CVM
-> `txsp2`（`43.160.224.101`）。`txsp` 全程保留运行，作为回滚。
+> `txsp2`（`43.160.224.101`）。迁移过程中 `txsp` 保留运行以便新旧对照，**迁移完成后已关机**。
 
 ## 结果概览
 
 - `txsp2` 已承载原 `txsp` 的全部站点，**DNS 已切换 12 条 A 记录**；
 - 按用户要求，`alipanx.com` / `www.alipanx.com` 两条记录**未动**（仍指向 `43.134.116.41`）；
-- `txsp` 上 `caddy` / `v2ray` / `usque` 仍在运行，可随时切回；
+- `txsp` 已在迁移完成后**关机**（2026-09-25）；需要回滚时需先在云控制台开机，再切 DNS；
 - 迁移方式：`txsp2` 预装 → 新旧双机同口径对照 → DNS 切换（`cloudctl`）→ 观察真实流量。
 
 ## 前置背景
@@ -123,9 +123,27 @@ Host 头打到 `:80`，11 个 Host 全部一致：
 > `fuxipan.com` 经 CF 访问最终是 **403**，但源站 `fuxipan.log` 无记录、源站直连仍是 503 →
 > 该 403 是 **Cloudflare 层**返回，与本次迁移无关。
 
+## Caddyfile 清理：移除 `(cfdns)` 块（2026-09-25）
+
+按「DNS 一律用 `cloudctl` 管理」的约定，删除了 `Caddyfile` 中的 `(cfdns)` snippet
+（即 `tls { dns cloudflare <token>; resolvers 1.1.1.1 }`）以及 4 处 `#import cfdns` 注释。
+
+- 文件：txsp2 `/etc/caddy/Caddyfile`（清理后 140 行）；
+  备份：`Caddyfile.bak.20260925154338`、`Caddyfile.bak.20260925154627`。
+- 流程：`caddy validate`（**以 `caddy` 用户执行**）→ `systemctl reload caddy` → 站点复检。
+  结果：`hunhepan 500 / lzpanx 200 / qkpanso 200 / fuxipan 200 / reman 502`；证书、WAF 不受影响。
+- 影响：不再使用 DNS-01 挑战（原本也未启用，所有 `import cfdns` 都是注释），
+  证书续期继续走 HTTP-01 / ALPN-01（`:80`/`:443` 均可从公网到达）；二进制里的
+  `caddy-dns/cloudflare` 插件保留但已无引用。
+- ⚠️ 上述两个备份文件里**仍含该 token**；轮换 token 后可一并删除。
+- 教训：删除 snippet 块必须按**花括号配对**计数（块内可能有嵌套 `{ }`）。
+  首次用“遇到第一个 `}` 就收尾”的写法误留了一个多余 `}`，`caddy validate` 报
+  `File to import not found: cfproxy`；由于 `reload` 失败会保留旧配置，线上未受影响，已从备份恢复后重做。
+
 ## 回滚
 
-`txsp` 服务仍在运行，回滚只需把受影响记录指回旧 IP：
+`txsp` 已关机。回滚步骤：先在云控制台**开机 `txsp`**（`caddy` / `v2ray` / `usque` 均为 enabled、
+开机自启），再把受影响记录指回旧 IP：
 
 ```bash
 cloudctl dns ensure --zone <zone> --type A --name <name> \
@@ -135,14 +153,16 @@ cloudctl dns ensure --zone <zone> --type A --name <name> \
 ## 遗留 / 待办
 
 1. **Cloudflare API Token 建议轮换**：排查 `Caddyfile` 时，`dns cloudflare <token>` 的 token
-   曾被原样打印到终端（脱敏规则未覆盖该写法）。建议在 Cloudflare 控制台轮换，并同步更新
-   `txsp2`（及 `txsp`）的 `/etc/caddy/Caddyfile`。凭据只应存在于配置文件中，本文不记录其值。
+   曾被原样打印到终端（脱敏规则未覆盖该写法）。该 token 已随 `(cfdns)` 块删除而**不再被 Caddy 使用**，
+   但仍建议在 Cloudflare 控制台轮换，并删除仍含旧值的历史备份
+   （`/etc/caddy/Caddyfile.bak.20260925154338`、`/etc/caddy/Caddyfile.bak.20260925154627`）。
+   本文不记录其值。
 2. `txsp` 上的 `usque` 已失效（socks 出网 000）；迁移后由 `txsp2` 承担。若仍需 txsp 侧可用需另行排查。
 3. **pm2 未迁移**：txsp 的 PM2 只运行 `pm2-logrotate` 模块、无业务进程，txsp2 未安装 pm2。
    若需要 PM2 日志轮转能力，按 `pm2-logrotate` skill 另行安装。
 4. `txsp` → `txsp2` 的免密通道（txsp 的 `/root/.ssh/id_ed25519` → txsp2 `authorized_keys`）
    保留与否待定；保留便于后续运维，撤销则从 txsp2 的 `authorized_keys` 删除该条。
-5. 观察期结束后再决定是否停止 `txsp` 的 `caddy` / `v2ray`（停之前先确认无需回滚）。
+5. `txsp` 已关机；若确认不再需要回滚，可考虑释放该实例。
 
 ## 关键路径速查（txsp2）
 
@@ -162,3 +182,5 @@ cloudctl dns ensure --zone <zone> --type A --name <name> \
 
 WAF dashboard（仅回环，走 SSH 隧道）：`scripts/open-txsp-waf-dashboard.sh`，设置
 `TXSP_HOST=txsp2` 即可（脚本默认 `txsp`）。
+
+DNS 变更一律使用 `cloudctl`（见 `cloudctl` skill），Caddyfile 中不再保留任何 DNS Provider 凭据。

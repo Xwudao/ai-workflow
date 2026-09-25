@@ -2,7 +2,7 @@
 
 > 采集时间：2026-09-06。本文基于三台服务器当前的监听端口、进程和 Caddyfile；不包含 DNS 解析、云防火墙或 CDN 控制台配置，因此公网入口以实际 DNS/CDN 配置为准。
 >
-> **2026-09-25 更新**：公网入口已从轻量服务器 `txsp`（`43.134.116.41`）迁到 CVM `txsp2`（`43.160.224.101`），`txsp` 仍在线作为回滚。迁移细节见 [`txsp-to-txsp2-migration.md`](txsp-to-txsp2-migration.md)。下文标注为 `txsp` 的「入口」角色，迁移后由 `txsp2` 承担（上游端口映射不变）。
+> **2026-09-25 更新**：公网入口已从轻量服务器 `txsp`（`43.134.116.41`）迁到 CVM `txsp2`（`43.160.224.101`），`txsp` 随后已关机（回滚需先开机）。迁移细节见 [`txsp-to-txsp2-migration.md`](txsp-to-txsp2-migration.md)。下文标注为 `txsp` 的「入口」角色，迁移后由 `txsp2` 承担（上游端口映射不变）；Caddyfile 中的 `(cfdns)` DNS-01 块已删除，**DNS 变更统一走 `cloudctl`**。
 
 ## 一句话总结
 
@@ -22,7 +22,7 @@
 | 节点 | 内网 IP | 角色 | 关键组件 |
 |---|---:|---|---|
 | `txsp2` | `10.3.0.12` | 公网域名入口、第一层反代（2026-09-25 起） | Caddy v2.11.4、`fabriziosalmi/caddy-waf v0.4.14`、v2ray、usque |
-| `txsp` | `10.3.4.17` | 原入口，现保留作回滚（服务仍在运行） | 同上 |
+| `txsp` | `10.3.4.17` | 原入口，**已关机**（回滚需先开机） | 同上 |
 | `gate` | `10.0.12.17` | 中转反代、部分直接域名入口、WAF | Caddy v2.11.4、`fabriziosalmi/caddy-waf v0.4.14` |
 | `app3` | `10.0.16.17` | 业务应用宿主机 | 多个 Go 服务；无 Caddy/Nginx |
 
@@ -172,4 +172,4 @@ trusted_proxies <仅 txsp2/CDN 的直接出口 IP 或 CIDR>
 3. **统一 WAF 策略**：txsp2 与 gate 均已使用新版 WAF。建议后续确定一个明确的 WAF 层，避免 hunhepan 的双重检测、其他站点却没有 WAF 的不一致状态。
 4. **谨慎处理转发头**：当前多层代理会透传 `X-Forwarded-For`。若后续在新版 WAF 上启用基于真实客户端 IP 的限流、GeoIP 或 ASN 规则，应为可信上游显式配置 `trusted_proxies`，不要无条件信任客户端可伪造的头。
 5. **修复失效上游**：检查 app3 的 `4680` 和 `4677` 服务状态，或暂时下线 gate 对应的 `:3002`、`:3003` 路由，避免持续 502。
-6. **凭据不入库**：Caddyfile 可能含 DNS Provider API Token；本文未记录该类凭据。建议改由环境变量或受限权限的凭据文件注入，并定期轮换。
+6. **凭据不入库**：Caddyfile 已不再包含 DNS Provider API Token（`(cfdns)` 块已于 2026-09-25 删除，DNS 变更改用 `cloudctl`）；历史备份文件仍含旧 token，建议轮换后删除。
