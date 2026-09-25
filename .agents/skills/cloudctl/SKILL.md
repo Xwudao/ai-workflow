@@ -1,13 +1,13 @@
 ---
 name: cloudctl
-description: 使用 cloudctl 统一 Cloud CLI 管理云资源（当前支持 Cloudflare DNS）。当任务需要查询/创建/更新/删除 DNS 记录、查看 zone，或需要多云 Provider 抽象时使用本 skill。
+description: 使用 cloudctl 统一 Cloud CLI 管理云资源（支持 Cloudflare DNS 与阿里云云解析 DNS）。当任务需要查询/创建/更新/删除 DNS 记录、查看 zone，或需要多云 Provider 抽象时使用本 skill。
 allowed-tools: Bash(cloudctl:*)
 ---
 
 # cloudctl skill
 
-`cloudctl` 是面向 AI Agent 的统一 Cloud CLI。当前实现 Cloudflare DNS
-（A / AAAA / CNAME / TXT / MX）。命令稳定、非交互、支持 `--json`。
+`cloudctl` 是面向 AI Agent 的统一 Cloud CLI。当前实现 Cloudflare DNS 与阿里云云解析
+DNS（AliDNS），支持 A / AAAA / CNAME / TXT / MX。命令稳定、非交互、支持 `--json`。
 
 ## 核心约定
 
@@ -17,7 +17,8 @@ allowed-tools: Bash(cloudctl:*)
 - 修改类命令支持 `--dry-run`，先看计划再执行。
 - `ensure` 幂等，优先使用它而不是 create/update 组合。
 - `delete` 是危险操作，必须传 `--yes`（不会弹确认）；也可先用 `--dry-run` 预览。
-- secret（API token）永不输出；不要把 token 写进日志或回显。
+- secret（API token / AccessKey）永不输出；不要把 secret 写进日志或回显。
+- 配置文件中的 secret 会加密存储（`enc:v1:`，AES-256-GCM），程序自动解密；不要手动编辑 `enc:v1:` 值。
 
 ## JSON 输出
 
@@ -58,16 +59,21 @@ allowed-tools: Bash(cloudctl:*)
     --config <path>        指定配置文件（默认 ~/.config/cloudctl/config.yaml）
     --timeout <duration>   单命令超时（默认 30s）
 
-环境变量：`CLOUDCTL_CONFIG`、`CLOUDCTL_PROVIDER`、
-`CLOUDCTL_<TYPE>_API_TOKEN`（如 `CLOUDCTL_CLOUDFLARE_API_TOKEN`）。
+环境变量：`CLOUDCTL_CONFIG`、`CLOUDCTL_PROVIDER`、`CLOUDCTL_KEY`（加密密钥）、
+`CLOUDCTL_<TYPE>_API_TOKEN`（如 `CLOUDCTL_CLOUDFLARE_API_TOKEN`）、
+`CLOUDCTL_<TYPE>_ACCESS_KEY_ID` / `CLOUDCTL_<TYPE>_ACCESS_KEY_SECRET`（如 `CLOUDCTL_ALIYUN_*`）。
 
 ## 配置与 Provider
 
     cloudctl init
     cloudctl init --type cloudflare --api-token "$CLOUDFLARE_API_TOKEN"
+    cloudctl init --type aliyun --access-key-id "$AK" --access-key-secret "$SK"
     cloudctl provider list --json
 
 一个 provider type 可以有多个 profile（多账号），用 `--provider <profile>` 选择。
+当前 provider type：`cloudflare`、`aliyun`（`alibabacloud` 亦可）。
+
+云解析相关：阿里云 provider 不支持 `proxied`；Cloudflare 支持 `--proxied`（仅 A/AAAA/CNAME）。
 
 ## 查询
 
