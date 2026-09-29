@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Open a private SSH tunnel to the WAF dashboard on txsp.
+# Open a private SSH tunnel to the Sentra admin UI on txsp2.
 set -Eeuo pipefail
 
-HOST="${TXSP_HOST:-txsp}"
+HOST="${TXSP_HOST:-txsp2}"
 LOCAL_PORT="${WAF_DASHBOARD_PORT:-13002}"
-REMOTE_PORT="${WAF_DASHBOARD_REMOTE_PORT:-13002}"
-URL="http://127.0.0.1:${LOCAL_PORT}/waf"
+REMOTE_PORT="${WAF_DASHBOARD_REMOTE_PORT:-2020}"
+URL="http://127.0.0.1:${LOCAL_PORT}/"
 
 ssh_pid=""
 cleanup() {
@@ -29,6 +29,6 @@ if ! kill -0 "${ssh_pid}" 2>/dev/null; then
   wait "${ssh_pid}"
 fi
 
-echo "WAF Dashboard: ${URL}"
+echo "Sentra UI: ${URL}"
 echo "Press Ctrl-C or close this terminal to stop the SSH tunnel."
 wait "${ssh_pid}"

@@ -109,15 +109,18 @@ flowchart LR
   - `/etc/caddy/waf/ip_whitelist.txt`
 - 日志：`/var/log/caddy/waf.json`
 
-### txsp2：新版 WAF
+### txsp2：Sentra WAF（2026-09-29 起）
 
-- 模块：`github.com/fabriziosalmi/caddy-waf v0.4.14`
-- 原 `args_rule`、`post_rule`、`user_agent_rule` 规则已迁移为 `/etc/caddy/waf/legacy-rules.json`。
-- 当前导入 WAF 的站点（2026-09-25 实测）：`lzpanx`、`hunhepan`、`reman`。
-- 配置、`waf/` 规则与证书由 `txsp` 逐字节拷贝而来，行为一致（详见迁移文档）。
-- 规则、黑白名单和日志目录与 gate 一致：`/etc/caddy/waf/`、`/var/log/caddy/waf.json`。
+- 模块：`github.com/Xwudao/sentra`（替换原 `github.com/fabriziosalmi/caddy-waf v0.4.14`）
+- 规则存于 SQLite `/var/lib/caddy/sentra/sentra.db`（12 内置 + 61 条 caddy-waf 转换规则），
+  IP 黑白名单也已导入为 Sentra IP 规则（313 block / 1 allow）。
+- 当前导入 WAF 的站点：`fuxipan`、`lzpanx`/`panso.me`、`hunhepan`、`reman`。
+- 客户端 IP：`trusted_proxies` = Cloudflare 全部边缘网段，`client_ip_header CF-Connecting-IP`。
+- 管理 API/UI 监听 `127.0.0.1:2020`，仅回环，经 SSH 隧道访问；不再有站点内 `/waf` 看板。
+- 旧的 `/etc/caddy/waf/` 规则与 `/var/log/caddy/waf.json` 已不再被新进程使用（保留待回滚）。
+- 详见 [`txsp2-sentra-waf-migration.md`](txsp2-sentra-waf-migration.md)。
 
-因此 `hunhepan` 请求会经过两次**新版** WAF：先 txsp2，再到 gate。
+因此 `hunhepan` 请求目前会先经过 txsp2 的 **Sentra** WAF，再到 gate 的 **fabriziosalmi** WAF。
 
 ## WAF 的客户端 IP 语义
 
