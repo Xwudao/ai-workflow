@@ -119,12 +119,48 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 xcaddy build v2.11.4 \
 > 升级只换二进制时，`internal/webassets/dist/index.html` 引用的 `assets/index-*.js|css`
 > 哈希会变，`scp` 后用 `curl http://127.0.0.1:2020/` 核对新哈希即可。
 
-- 新二进制 SHA-256：`b61417f3514ac19d44db2207a4725b92ceb4b0e302c85fca9567384883b76e5b`
-  （含新版 Web 控制台，`index-TJu_xNGX.js` / `index-BbK9NhRB.css`；修复引用计数 +
+- 新二进制 SHA-256：`b39be2a189025d1c851ea1cff3009d779508dd0cb4fafcc19dec5bad46e6922d`
+  （含新版 Web 控制台，`index-BpopDuIL.js` / `index-D6u-14gU.css`；包含引用计数修复 +
   `events_retention_days`）
 - 本地保存：`~/Backups/caddy-txsp2-v2.11.4-sentra-linux-amd64`
 - 生成好的初始 DB（12 内置 + 61 转换规则、313 block + 1 allow）：
   SHA-256 `400a388d5319bbecca67355b6953f81ff01214fb89160ee02cde096db50d27aa`
+
+### 一键部署（`scripts/deploy-sentra-caddy.sh`）
+
+改完 `web/` 或 Go 代码后，用 workflow 仓库里的脚本完成「构建 SPA → 测试 → 交叉编译 →
+上传 → 临时端口 validate（不影响线上） → 备份 → 替换重启 → 验证」。替换后若重启或验证失败，会自动恢复备份并重启；替换前失败则不触碰线上：
+
+```bash
+scripts/deploy-sentra-caddy.sh --host txsp2 -y            # 构建 + 部署 + 验证
+scripts/deploy-sentra-caddy.sh --host txsp2 --rollback -y # 回到上次部署前
+```
+
+- 默认只替换二进制；要同时更新 Caddyfile 用 `-c <path>`（会先在临时 admin 端口/临时 DB 上
+  `caddy validate`，成功才安装）。
+- `--skip-web` / `--skip-tests` 跳过对应步骤；`--binary <path>` 直接部署已有二进制
+  （离线/回滚用）。
+- 验证项：service active、管理端 `/` 引用的 `index-*.js|css` 与本地一致且 200、
+  对 `PROBE_HOSTS`（txsp2 默认 `hunhepan.com fuxipan.com lzpanx.com`）的 SQLi 探测返回 403。
+  `PROBE_HOSTS=""` 可跳过。
+- 备份写入 `/root/sentra-deploy-backups/<ts>`；最近一次路径记在
+  `/root/.sentra-last-deploy-backup`；默认保留最近 5 份。
+- 脚本支持 macOS Bash 3.2；上传使用 `scp -O`（txsp2 的 SSH 不提供默认 SFTP 子系统）。
+
+### 2026-09-30 再部署记录
+
+- 首次上传后在本地确认提示遇到 Bash 3.2 不支持的 `${ans,,}`，未执行远端替换；
+  修正后重试，默认 `scp` 又因 SFTP 子系统不可用而断开，远端服务仍保持运行。
+- 修复确认提示、改用 `scp -O`，并增加替换后验证失败的自动回滚；
+  重新构建 SPA、运行 `go test ./...`、交叉编译并部署到 `txsp2`，仅替换
+  `/usr/local/sbin/caddy`，未修改 `/etc/caddy/Caddyfile` 或 Sentra DB。
+- 线上 SHA-256：`816e2e53e98f947ce798d7aff6cb7d34bfa7eef8318455fcee3e2547f54e70da`；
+  先用临时配置验证通过，重启后服务 active、管理 UI 返回 200 且 JS/CSS 均为 200，
+  三个默认站点 SQLi 探测均返回 403；再次核对线上二进制 SHA 与部署值一致。
+- 本次替换前备份：`/root/sentra-deploy-backups/20260930-025715`（含二进制、Caddyfile、校验文件）；
+  回滚：`scripts/deploy-sentra-caddy.sh --host txsp2 --rollback -y`，会先备份当前状态，
+  恢复该目录中的二进制与 Caddyfile 并 **restart** Caddy；回滚后仍须复测管理 UI 与 WAF。
+
 
 ## 关键文件与路径
 
@@ -191,6 +227,10 @@ sudo systemctl restart caddy
 ```
 
 更换二进制/模块必须 `restart`，不能只 `reload`。
+
+日常部署产生的备份（仅二进制 + Caddyfile）在 `/root/sentra-deploy-backups/<ts>`，可用
+`scripts/deploy-sentra-caddy.sh --rollback` 一键回滚；上面这份 `sentra-migration-backup-*`
+是迁移前的完整现场（含旧 caddy-waf 规则与 service 文件），用于彻底退回 fabriziosalmi 方案。
 
 ## 已知问题与后续
 
