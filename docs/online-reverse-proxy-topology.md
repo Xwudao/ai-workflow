@@ -46,12 +46,12 @@ flowchart LR
 
 | 公网域名（txsp2） | txsp2 上游 | gate 上游 | app3 服务 / 端口 | WAF 路径 |
 |---|---|---|---|---|
-| `fuxipan.com` / `www.fuxipan.com` | `110.40.167.56:3010` | `10.0.16.17:6655` | `go-fuxipan` | gate 新 WAF |
-| `lzpanx.com` / `www.lzpanx.com` / `panso.me` | `110.40.167.56:3006` | `10.0.16.17:4685` | `go-lzpan` | gate 新 WAF |
-| `qkpanso.com` / `www.qkpanso.com` | `110.40.167.56:3007` | `10.0.16.17:4686` | `go-qkpanso` | 未启用 |
+| `fuxipan.com` / `www.fuxipan.com` | `110.40.167.56:3010` | `10.0.16.17:6655` | `go-fuxipan` | txsp2 + gate WAF |
+| `lzpanx.com` / `www.lzpanx.com` / `panso.me` | `110.40.167.56:3006` | `10.0.16.17:4685` | `go-lzpan` | txsp2 + gate WAF |
+| `qkpanso.com` / `www.qkpanso.com` | `110.40.167.56:3007` | `10.0.16.17:4686` | `go-qkpanso` | txsp2 WAF |
 | `alipanx.com` / `www.alipanx.com` | `110.40.167.56:3003` | `10.0.16.17:4677` | 当前未监听 | 未启用 |
-| `api.hunhepan.com` / `www.hunhepan.com` / `hunhepan.com` | `110.40.167.56:3001` | `10.0.16.17:3765` | `go-hunhepan` | txsp 新 WAF + gate 新 WAF |
-| `reman.xwd.pw` | `110.40.167.56:3009` | `10.0.16.17:4678` | `go-reman` | txsp 新 WAF |
+| `api.hunhepan.com` / `www.hunhepan.com` / `hunhepan.com` | `110.40.167.56:3001` | `10.0.16.17:3765` | `go-hunhepan` | txsp2 + gate WAF |
+| `reman.xwd.pw` | `110.40.167.56:3009` | `10.0.16.17:4678` | `go-reman` | txsp2 WAF |
 | `v2fd.com` | `110.40.167.56:3008` | `10.0.16.17:8484` | `go-v2fd` | txsp 新 WAF |
 
 ### 需要关注的异常链路
@@ -109,7 +109,11 @@ flowchart LR
   - `/etc/caddy/waf/ip_whitelist.txt`
 - 日志：`/var/log/caddy/waf.json`
 
-### txsp2：Sentra WAF（2026-09-29 起）
+### txsp2：caddy-waf（2026-10-10 切回）
+
+2026-10-10 已切回与 gate 一致的 `fabriziosalmi/caddy-waf v0.4.14` 二进制；五组原 Sentra 站点改为从 `/etc/caddy/waf/` 加载规则及名单，站点内看板仅回环可用。详见 [切回记录](txsp2-caddy-waf-restore.md)。下面保留此前 Sentra 阶段信息供追溯，**不再代表当前状态**。
+
+#### 历史：Sentra 阶段（2026-09-29 至 2026-10-10）
 
 - 模块：`github.com/Xwudao/sentra`（替换原 `github.com/fabriziosalmi/caddy-waf v0.4.14`）
 - 规则存于 SQLite `/var/lib/caddy/sentra/sentra.db`（12 内置 + 61 条 caddy-waf 转换规则），
@@ -120,11 +124,11 @@ flowchart LR
 - 旧的 `/etc/caddy/waf/` 规则与 `/var/log/caddy/waf.json` 已不再被新进程使用（保留待回滚）。
 - 详见 [`txsp2-sentra-waf-migration.md`](txsp2-sentra-waf-migration.md)。
 
-因此 `hunhepan` 请求目前会先经过 txsp2 的 **Sentra** WAF，再到 gate 的 **fabriziosalmi** WAF。
+目前 `hunhepan` 请求先经过 txsp2 的 **fabriziosalmi** WAF，再到 gate 的同款 WAF。
 
 ## WAF 的客户端 IP 语义
 
-`fabriziosalmi/caddy-waf` 区分“直连对端 IP”和“可信代理传来的客户端 IP”。gate 与 txsp 当前都**未配置** `trusted_proxies`，因此：
+`fabriziosalmi/caddy-waf` 区分“直连对端 IP”和“可信代理传来的客户端 IP”。gate 与 txsp2 当前都**未配置** `trusted_proxies`，因此：
 
 - 限流、GeoIP / ASN 和规则目标 `REMOTE_IP` 使用 TCP 直连对端 `RemoteAddr`。
 - 对经 txsp2 到达 gate 的请求，这通常是 txsp2 的出口 / NAT IP，而不是最终访问者；直接到达 gate 的请求则是其直连 CDN 节点或客户端。

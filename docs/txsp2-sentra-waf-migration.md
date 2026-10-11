@@ -1,6 +1,6 @@
 # txsp2：WAF 从 caddy-waf 迁移到 Sentra
 
-> 完成时间：2026-09-29
+> 完成时间：2026-09-29；**历史记录**：2026-10-10 已切回 caddy-waf，当前状态见 [切回记录](txsp2-caddy-waf-restore.md)。
 
 ## 目标
 
