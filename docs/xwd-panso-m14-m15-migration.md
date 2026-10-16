@@ -67,12 +67,14 @@
 |---|---|---|---|
 | `txhk`（v2ray 客户端出站） | `/usr/local/etc/v2ray/config.json` | `outbounds[proxy].vnext[0].address` 与 `tlsSettings.serverName`：`m15.xwd.pw` → `m15.panso.me` | `/root/v2ray-config-backup-20260913-074528.json` |
 | `app3`（sing-box 出站） | `/etc/sing-box/config.json` | `proxy`（→ `m14.xwd.pw`）与 `vmess-2`（→ `m15.xwd.pw`）的 `server` / `tls.server_name` 全部改为 `*.panso.me` | `/root/singbox-config-backup-20260913-155037.json` |
+| `dev`（sing-box 出站，2026-10-14 补做） | `/home/tim/tools/sing-box/config.json` | `outbounds[0]` 的 `server` / `tls.server_name`：`m14.xwd.pw` → `m14.panso.me` | `dev:/home/tim/tools/sing-box/config.json.bak.20261014-104852`（同目录另有 2025-08 的 `config.json.bak-20250825`） |
 
 切换前均在服务器上用**临时实例**（独立 socks 入站 + 同一出站）做端到端验证，确认 vmess/ws/tls 隧道可达后再动生产配置：
 
 - `txhk`：临时 `v2ray run` 实例 socks `10810/10811`，`curl -x socks5h://… https://www.gstatic.com/generate_204` → `204`。
 - `app3`：`sing-box check` 通过后 `systemctl reload sing-box`；`socks-in:38080`（→ `m14.panso.me`）与 `socks-in-2:38081`（→ `m15.panso.me`）各测一次 → 均 `204`，journal 无报错。
 - `txhk` 用 `install` 保留原属主/权限后 `systemctl restart v2ray`（配置生效后确认监听 `127.0.0.1:3344` 正常）。
+- `dev`（补做，此前遗漏）：`sing-box check -c config.json` 通过后 `systemctl restart sing-box`（systemd 单元 `/etc/systemd/system/sing-box.service`，以 `tim` 用户运行，`-c /home/tim/tools/sing-box/config.json`），随后 `curl -x http://127.0.0.1:7890 https://www.gstatic.com/generate_204` → `204`，journal 无 TLS/连接错误。
 
 ## 验证结果
 
@@ -113,4 +115,5 @@ curl -X DELETE -H "Authorization: Bearer $CF_TOKEN" \
 
 1. 确认所有客户端（SSH、代理客户端）已改用 `m14/m15.panso.me`。
 2. 迁移 `reman.xwd.pw` 到 `panso.me` 等效子域，并同步 `app3` 业务配置与 sitemap。
-3. 从 `txhk` / `txsp` 的 Caddyfile 中移除 `m14.xwd.pw` / `m15.xwd.pw` 站点标签，并删除 `xwd.pw` zone 记录。
+3. `px.xwd.pw`（`app3` 上 `go-hunhepan` 的 APK 下载直链，见 `web/src/core/constants.ts`、`assets/seo/index.tpl`）尚未迁移，需确认后换成等效的 `panso.me` 地址。
+4. 从 `txhk` / `txsp` 的 Caddyfile 中移除 `m14.xwd.pw` / `m15.xwd.pw` 站点标签，并删除 `xwd.pw` zone 记录。

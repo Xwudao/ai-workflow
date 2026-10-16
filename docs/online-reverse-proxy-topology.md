@@ -3,6 +3,10 @@
 > 采集时间：2026-09-06。本文基于三台服务器当前的监听端口、进程和 Caddyfile；不包含 DNS 解析、云防火墙或 CDN 控制台配置，因此公网入口以实际 DNS/CDN 配置为准。
 >
 > **2026-09-25 更新**：公网入口已从轻量服务器 `txsp`（`43.134.116.41`）迁到 CVM `txsp2`（`43.160.224.101`），`txsp` 随后已关机（回滚需先开机）。迁移细节见 [`txsp-to-txsp2-migration.md`](txsp-to-txsp2-migration.md)。下文标注为 `txsp` 的「入口」角色，迁移后由 `txsp2` 承担（上游端口映射不变）；Caddyfile 中的 `(cfdns)` DNS-01 块已删除，**DNS 变更统一走 `cloudctl`**。
+>
+> **2026-10-15 部分迁移**：因 SG 线路劣化（SG→SH 直连丢包 26–35%），`hunhepan.com`（含 www/api）与 `lzpanx.com`（含 www、`panso.me`）的公网入口已从 `txsp2`(SG) 改到 `txhk`(HK)，上游仍为 `10.77.42.2:3001` / `:3006`（即 gate），CF 保持 proxied。其余域名（fuxipan、reman、m15 等）仍在 `txsp2`。`txsp2` 上的对应站点块**保留未删**以便回滚。详见 [`txhk-entry-hunhepan-lzpanx-migration.md`](txhk-entry-hunhepan-lzpanx-migration.md)。
+>
+> **2026-10-15 再迁移（临时入口）**：`hunhepan.com`（含 www/api）与 `lzpanx.com`（含 www、`panso.me`）的公网入口已从 `txhk`(HK) 改到新购香港机 **`154.37.222.86`**，并 **CF 改为灰云（proxied=false）**，由该机 Caddy（gate 同款二进制 + WAF）自行申请 LE 证书并在 `:80`/`:443` 服务；上游改为**直连 gate 公网** `110.40.167.56:3001` / `:3006`（不再经 txhk 的 WG）。`txhk` 上的对应站点块保留以便回滚。详见 [`rainyun-hk-entry-hunhepan-lzpanx.md`](rainyun-hk-entry-hunhepan-lzpanx.md)。
 
 ## 一句话总结
 
