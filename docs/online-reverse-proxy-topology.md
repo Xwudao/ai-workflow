@@ -7,6 +7,8 @@
 > **2026-10-15 部分迁移**：因 SG 线路劣化（SG→SH 直连丢包 26–35%），`hunhepan.com`（含 www/api）与 `lzpanx.com`（含 www、`panso.me`）的公网入口已从 `txsp2`(SG) 改到 `txhk`(HK)，上游仍为 `10.77.42.2:3001` / `:3006`（即 gate），CF 保持 proxied。其余域名（fuxipan、reman、m15 等）仍在 `txsp2`。`txsp2` 上的对应站点块**保留未删**以便回滚。详见 [`txhk-entry-hunhepan-lzpanx-migration.md`](txhk-entry-hunhepan-lzpanx-migration.md)。
 >
 > **2026-10-15 再迁移（临时入口）**：`hunhepan.com`（含 www/api）与 `lzpanx.com`（含 www、`panso.me`）的公网入口已从 `txhk`(HK) 改到新购香港机 **`154.37.222.86`**，并 **CF 改为灰云（proxied=false）**，由该机 Caddy（gate 同款二进制 + WAF）自行申请 LE 证书并在 `:80`/`:443` 服务；上游改为**直连 gate 公网** `110.40.167.56:3001` / `:3006`（不再经 txhk 的 WG）。`txhk` 上的对应站点块保留以便回滚。详见 [`rainyun-hk-entry-hunhepan-lzpanx.md`](rainyun-hk-entry-hunhepan-lzpanx.md)。
+>
+> **2026-10-16 回迁 `txsp2`(SG) + 上游改公网直连**：`hunhepan.com`（含 www/api）与 `lzpanx.com`（含 www）的公网入口改到 `txsp2`(SG)（`43.160.224.101`），**保持 CF 橙云（proxied=true）**；同时 `txsp2` 上这两组站点的上游由 WG 内网 `10.77.42.2` 改为**直连 gate 公网** `110.40.167.56:3001` / `:3006`（不走 WireGuard）。同一天 `qkpanso.com`（含 www，DNS 本就在 txsp2）上游也由 WG `10.77.42.2:3007` 改为公网 `110.40.167.56:3007`。`panso.me` 未改，仍在 `txhk`。详见 [`txsp2-entry-hunhepan-lzpanx-public-direct.md`](txsp2-entry-hunhepan-lzpanx-public-direct.md)。
 
 ## 一句话总结
 
@@ -18,7 +20,7 @@
 
 - **txsp2** 是主要的公网 HTTP 入口和第一层 Caddy 反代（2026-09-25 起；`txsp` 保留作回滚）。
 - **gate** 是内网中转 / 汇聚反代层，同时也承载部分直接域名入口；其 `:3001`、`:3006`、`:3010` 已启用新版 WAF。
-- **app3** 不运行 Caddy/Nginx，直接运行各个 Go 后端服务。
+- **app3** 主要直接运行各个 Go 后端服务；2026-10-19 起为 `ai-api.misiai.com` 单独运行 Caddy（`:80`/`:443`，反代 `127.0.0.1:5384`，LE 自动 TLS）。
 - 部分域名绕过 txsp，直接由 gate 的 `:443` 代理到 app3 或其他远程服务器。
 
 ## 节点角色
@@ -28,7 +30,7 @@
 | `txsp2` | `10.3.0.12` | 公网域名入口、第一层反代（2026-09-25 起） | Caddy v2.11.4、`fabriziosalmi/caddy-waf v0.4.14`、v2ray、usque |
 | `txsp` | `10.3.4.17` | 原入口，**已关机**（回滚需先开机） | 同上 |
 | `gate` | `10.0.12.17` | 中转反代、部分直接域名入口、WAF | Caddy v2.11.4、`fabriziosalmi/caddy-waf v0.4.14` |
-| `app3` | `10.0.16.17` | 业务应用宿主机 | 多个 Go 服务；无 Caddy/Nginx |
+| `app3` | `10.0.16.17` | 业务应用宿主机；`ai-api.misiai.com` 直接入口 | 多个 Go 服务；Caddy（2026-10-19 起，仅 `ai-api.misiai.com`） |
 
 ## 总体流向
 
@@ -77,6 +79,8 @@ flowchart LR
 | `yjs.lzpan.com` | `139.155.21.35:3007`（外部后端） |
 
 这些 gate 直接域名当前没有导入 WAF 宏。
+
+此外，`ai-api.misiai.com` 不经 gate 或 txsp2：DNS A 记录直接指向 app3 公网 IP `118.89.110.51`，由 app3 本机 Caddy 终止 TLS 并反代 `127.0.0.1:5384`（`go-ai-api`）。详见 [`app3-ai-api-caddy.md`](app3-ai-api-caddy.md)。
 
 ## gate 中转端口完整映射
 

@@ -86,3 +86,14 @@ ufw allow proto udp from 10.0.12.17 to any
   ```
 
 - 若要恢复 sing-box 配置，使用上述备份内的 `sing-box/config.json`，执行 `sing-box check -C /etc/sing-box` 后重启 `sing-box.service`。
+
+## 2026-10-19 追加：公网 80/443
+
+为在 app3 上运行 Caddy 并为 `ai-api.misiai.com` 自动申请 TLS，新增：
+
+```bash
+ufw allow 80/tcp
+ufw allow 443/tcp
+```
+
+详见 [`app3-ai-api-caddy.md`](app3-ai-api-caddy.md)。
