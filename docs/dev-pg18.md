@@ -126,8 +126,9 @@ PostgreSQL Database directory appears to contain a database; Skipping initializa
 
 ## 安全提示
 
-`ufw` 当前未启用，5432 与 3306 一样暴露在 `0.0.0.0`。如仅需本机访问，把 compose 的
-`ports` 改为 `127.0.0.1:5432:5432`，或启用防火墙限制来源。
+2026-10-19 已启用 UFW + 独立 Docker 转发过滤，见 [防火墙维护记录](dev-firewall-ufw-ec20.md)。原实例仍绑定所有地址，但新建服务连接仅允许可信局域网；不能仅依赖 UFW INPUT 保护 Docker 发布端口。
+
+同日新增独立第二实例，宿主端口 5431，未迁移或修改此开发库，见 [第二实例部署记录](dev-postgres-5431.md)。
 
 ## 回滚
 
