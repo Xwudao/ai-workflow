@@ -1,0 +1,8 @@
+[Unit]
+Description=gate IP auto-ban guard (threshold based)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gate-ipguard.py
+Nice=5

@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily per-IP stats for gate Caddy logs (00:10 Asia/Shanghai)
+
+[Timer]
+OnCalendar=*-*-* 00:10:00
+Persistent=true
+Unit=gate-ipstats.service
+
+[Install]
+WantedBy=timers.target

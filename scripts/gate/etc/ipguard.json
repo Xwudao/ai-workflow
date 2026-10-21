@@ -1,0 +1,11 @@
+{
+  "mode": "enforce",
+  "rate_per_min": 60,
+  "rate_minutes": 3,
+  "daily_total": 2000,
+  "ban_seconds": 1800,
+  "ban_seconds_repeat": 0,
+  "ban_seconds_long": 0,
+  "strikes_for_long": 3,
+  "max_bans": 3000
+}

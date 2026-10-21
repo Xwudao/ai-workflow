@@ -1,0 +1,10 @@
+[Unit]
+Description=Run gate IP auto-ban guard every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+Unit=gate-ipguard.service
+
+[Install]
+WantedBy=timers.target

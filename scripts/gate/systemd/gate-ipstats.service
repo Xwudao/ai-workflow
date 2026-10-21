@@ -1,0 +1,10 @@
+[Unit]
+Description=Caddy access log per-IP daily stats (gate)
+Documentation=https://github.com/ (see docs/gate-access-log-ipstats.md)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gate-ipstats.py
+Nice=10
+IOSchedulingClass=idle
