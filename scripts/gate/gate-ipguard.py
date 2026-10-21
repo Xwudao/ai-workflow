@@ -21,7 +21,9 @@
 
 import argparse
 import collections
+import contextlib
 import datetime as dt
+import fcntl
 import glob
 import gzip
 import ipaddress
@@ -30,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 TZ = dt.timezone(dt.timedelta(hours=8))
 LOGDIR = "/var/log/caddy"
@@ -148,6 +151,34 @@ def save_state(state):
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(state, fh, separators=(",", ":"))
     os.replace(tmp, STATE_PATH)
+
+
+@contextlib.contextmanager
+def state_lock(timeout=120):
+    """给 state.json 加排他锁。
+
+    timer 每分钟跑一次 oneshot，手工 --unban 如果和它撞车：它先把旧 state 读进内存，
+    随后 save_state() 会把刚删掉的封禁记录写回去（实测复现过：解封后片段里又出现该 IP）。
+    加锁后两边串行，解封结果不会再被静默覆盖。
+    """
+    os.makedirs(STATE_DIR, exist_ok=True)
+    fh = open(os.path.join(STATE_DIR, "state.lock"), "a+")
+    deadline = time.time() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.time() > deadline:
+                    raise SystemExit("!!! 等待 state 锁超时（另一个 gate-ipguard 实例正在跑？）")
+                time.sleep(0.2)
+        yield
+    finally:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        finally:
+            fh.close()
 
 
 def open_log(path):
@@ -356,12 +387,37 @@ def reload_caddy():
         return False
 
 
+def unban(state, targets):
+    """把一个 IP 的**全部历史**清掉：封禁记录、strikes、日总量、分钟桶。
+
+    为什么不只删 bans：判定有两条线，速率靠 minutes、日总量靠 daily。
+    只删 bans 的话，只要 daily 仍然越线（例如 daily=3407 ≥ daily_total=2000），
+    下一次 timer 会用同一条理由立刻再封一次 —— 解封等于无效（实测就是这样复发）。
+    strikes 同理：不清的话下次越线直接跳永久。
+    """
+    cleared = []
+    for ip in targets:
+        info = {
+            "ban": state["bans"].pop(ip, None),
+            "strikes": state.get("strikes", {}).pop(ip, None),
+            "daily": {},
+            "minutes": state["minutes"].pop(ip, None),
+        }
+        for day, counts in state.get("daily", {}).items():
+            count = counts.pop(ip, None)
+            if count:
+                info["daily"][day] = count
+        cleared.append((ip, info))
+    return cleared
+
+
 def main():
     ap = argparse.ArgumentParser(description="gate IP 自动封禁守护（默认 dry-run）")
     ap.add_argument("--enforce", action="store_true", help="启用封禁（覆盖配置文件里的 mode）")
     ap.add_argument("--dry-run", action="store_true", help="强制 dry-run")
     ap.add_argument("--status", action="store_true", help="只打印当前状态")
-    ap.add_argument("--unban", metavar="IP[,IP...]", help="解封指定 IP（会清空其 strikes）")
+    ap.add_argument("--unban", metavar="IP[,IP...]",
+                    help="彻底解封：清封禁记录 + strikes + 当日计数 + 分钟桶")
     args = ap.parse_args()
 
     conf = load_config()
@@ -372,18 +428,27 @@ def main():
         mode = "dry-run"
 
     whitelist = load_whitelist()
-    state = load_state()
 
+    with state_lock():
+        state = load_state()
+        return run(args, conf, mode, whitelist, state)
+
+
+def run(args, conf, mode, whitelist, state):
     if args.unban:
         targets = [item.strip() for item in args.unban.split(",") if item.strip()]
-        for ip in targets:
-            state["bans"].pop(ip, None)
-            state["strikes"].pop(ip, None)
-            log("[%s] 手动解封 %s" % (mode, ip))
+        for ip, info in unban(state, targets):
+            log("[%s] 手动解封 %s（封禁=%s strikes=%s 当日计数=%s 分钟桶=%s）" % (
+                mode, ip,
+                "有" if info["ban"] else "无",
+                len(info["strikes"] or []),
+                sum(info["daily"].values()) or 0,
+                "清" if info["minutes"] else "无"))
         count, changed = write_snippet(state, conf, mode)
         save_state(state)
         if changed and mode == "enforce":
-            reload_caddy()
+            ok = reload_caddy()
+            log("快照更新: %d 条封禁, reload=%s" % (count, ok))
         print("解封后剩余封禁: %d" % count)
         return 0
 

@@ -179,7 +179,7 @@ curl -H 'X-Guard-Key: <key>' https://hhp.misiai.com/...
 ```bash
 # 看当前计数/封禁
 sudo /usr/local/bin/gate-ipguard.py --status          # 含“永久”标记
-sudo /usr/local/bin/gate-ipguard.py --unban 1.2.3.4   # 手动解封（同时清 strikes）
+sudo /usr/local/bin/gate-ipguard.py --unban 1.2.3.4   # 彻底解封（见下方说明）
 
 # 手动跑一次（按配置文件里的 mode）
 sudo /usr/local/bin/gate-ipguard.py
@@ -199,6 +199,38 @@ tail -f /var/log/gate-ipguard.log                     # 谁被封/解封
 cat /etc/caddy/blocks/banned.caddyfile | head -3      # 生效片段
 grep -c . /etc/caddy/blocks/banned.caddyfile          # 行数（IP 都在同一行，行数≈3）
 ```
+
+## 解封（`--unban`）
+
+`--unban <ip[,ip...]>` 会把这个 IP 的**全部历史**清掉，而不只是把它从片段里拿掉：
+
+| 清什么 | 不清会怎样 |
+|---|---|
+| `bans`（封禁记录） | 旧片段里还会有它 |
+| `strikes`（7 天处置次数） | 下次越线直接跳永久 |
+| `daily`（当日总量） | **下一次 timer 会凭同一条日总量线立刻再封一次** |
+| `minutes`（每分钟桶） | 下一次 timer 会凭速率线立刻再封一次 |
+
+所以 `--unban` = “这个 IP 从没来过”，之后重新从 30 分钟起步。日志会打印实际清了什么，例如：
+
+```
+2026-10-21 23:11:45 [enforce] 手动解封 101.204.77.211（封禁=有 strikes=1 当日计数=3407 分钟桶=清）
+解封后剩余封禁: 84
+```
+
+> 早期版本只清 `bans` + `strikes`，**实测踩过两次坑**（2026-10-21 23:03）：
+> ① 那次 `--unban` 与同一秒启动的 timer 撞车，timer 先把旧 state 读进内存、随后 `save_state()`
+> 把删掉的记录写了回去，解封被静默撤销；② 即使没撞车，`daily=3407 ≥ daily_total` 会让下一分钟的
+> timer 用同一条理由再封一次。现在 `state.json` 读写有 `flock`（`/var/lib/gate-ipguard/state.lock`），
+> 手工解封与 timer 串行，且 `--unban` 会一并清空 `daily`/`minutes`。
+
+注意：
+
+- 精确匹配、不支持 CIDR（传 `1.2.3.0/24` 会静默“解封 0 个”）；IPv6 要写全地址。
+- 如果那个 IP **仍在继续打**，解封后它照样会再次越线被封（这次是首次 30 分钟）—— 想长期放行请用
+  `X-Guard-Key`（与 IP 无关）或 `whitelist.txt`。
+- `--status` 只显示前 20 条，别用“看不见”判断是否被封；用
+  `sudo grep -c '<ip 转义点>' /etc/caddy/blocks/banned.caddyfile`。
 
 ## 已做的验证
 
