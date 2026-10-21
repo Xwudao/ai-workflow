@@ -54,6 +54,7 @@ DEFAULTS = {
     "ban_seconds_long": 0,      # 屡犯：0 = 永久
     "strikes_for_long": 3,      # 7 天内被处置这么多次 -> 长封
     "max_bans": 3000,           # 快照里最多保留多少条，防止配置无限膨胀
+    "bypass_key": "",           # 免封密钥：请求带 X-Guard-Key: <该值> 时既不计入统计也不被封
     "minute_keep": 30,          # 内存里保留多少分钟的窗口
 }
 
@@ -69,6 +70,7 @@ RE_TS = re.compile(r"\[(\d\d/\w{3}/\d{4}:\d\d:\d\d:\d\d [+-]\d{4})\]")
 RE_EOIP = re.compile(r'eoip="([^"]*)"')
 RE_CFIP = re.compile(r'cfip="([^"]*)"')
 RE_XFR = re.compile(r'xfr="([^"]*)"')
+RE_GK = re.compile(r'gk="([^"]*)"')
 # 与 gate 的 (xfr) 正则保持一致：只有这些后缀的请求才算“自己进来的流量”
 RE_XFR_OK = re.compile(
     r"^([a-z0-9-]+\.)*(misiai\.com|panso\.me|lzpanx\.com|hunhepan\.com|qkpanso\.com"
@@ -156,6 +158,7 @@ def open_log(path):
 
 def ingest(state, conf):
     """从活跃日志里增量读取新行，更新每分钟计数与当日总量。"""
+    bypass = str(conf.get("bypass_key") or "").strip()
     now = dt.datetime.now(TZ)
     today = now.date().isoformat()
     minute_now = int(now.timestamp() // 60)
@@ -186,6 +189,8 @@ def ingest(state, conf):
                 seen += 1
                 m = RE_XFR.search(line)
                 if not m or not RE_XFR_OK.match(m.group(1).strip()):
+                    continue
+                if bypass and bypass in line:
                     continue
                 ip = None
                 for regex in (RE_EOIP, RE_CFIP):
@@ -297,13 +302,17 @@ def render_snippet(state, conf):
     active.sort(key=lambda item: item[1]["until"], reverse=True)
     active = active[: int(conf["max_bans"])]
 
+    bypass = str(conf.get("bypass_key") or "").strip()
     body = []
     if active:
         alt = "|".join(ip.replace(".", "\\.") for ip, _ in active)
-        body.append("@banned_eo header_regexp Eo-Connecting-Ip ^(%s)$" % alt)
-        body.append('respond @banned_eo "Forbidden" 403')
-        body.append("@banned_cf header_regexp Cf-Connecting-Ip ^(%s)$" % alt)
-        body.append('respond @banned_cf "Forbidden" 403')
+        for label, field in (("eo", "Eo-Connecting-Ip"), ("cf", "Cf-Connecting-Ip")):
+            body.append("@banned_%s {" % label)
+            body.append("\theader_regexp %s ^(%s)$" % (field, alt))
+            if bypass:
+                body.append("\tnot header X-Guard-Key %s" % bypass)
+            body.append("}")
+            body.append('respond @banned_%s "Forbidden" 403' % label)
     return body, len(active)
 
 

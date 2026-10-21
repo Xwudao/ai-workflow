@@ -7,5 +7,6 @@
   "ban_seconds_repeat": 0,
   "ban_seconds_long": 0,
   "strikes_for_long": 3,
-  "max_bans": 3000
+  "max_bans": 3000,
+  "bypass_key": "89f2e17ed30302fc59fde2a332e542f4"
 }

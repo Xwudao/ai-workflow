@@ -30,6 +30,11 @@ if [ -f "$DIR/etc/bot-allowlist.txt" ]; then
   scp -q "$DIR/etc/bot-allowlist.txt" "$HOST:/etc/gate-ipguard/whitelist.d/bot-allowlist.txt"
 fi
 
+if [ -d "$DIR/etc/whitelist.d" ]; then
+  echo "==> 推送手工白名单段（whitelist.d/*）"
+  scp -q "$DIR"/etc/whitelist.d/*.txt "$HOST:/etc/gate-ipguard/whitelist.d/"
+fi
+
 if [ "$WITH_CONFIG" -eq 1 ]; then
   echo "==> 覆盖配置（ipguard.json / whitelist.txt）"
   scp -q "$DIR/etc/ipguard.json" "$HOST:/etc/gate-ipguard/ipguard.json"

@@ -80,6 +80,49 @@ respond @banned_cf "Forbidden" 403
 - 计数只取「带合法 `X-FR`（CDN/入口机链路）且带 `eoip`/`cfip`」的请求 → 直连扫描器（已被 403）不参与计数，也不会误封 CDN 节点。
 - 白名单内置：`127/8`、`::1`、`10/8`、`172.16/12`、`192.168/16`、`100.64/10`、`fd00::/8`、gate `110.40.167.56`、txsp2 `43.160.224.101`、alhk `47.242.228.248`。
 
+## 自己的设备怎么免封（X-Guard-Key）
+
+手机 SIM / 家宽出口 IP 会一直变，按 IP 白名单维护不过来（一个 `/16` 就有 6 万多个地址，
+还容易把同段里的采集器一起放走）。所以额外做了一条**与 IP 无关**的免封通道：
+
+```json
+// /etc/gate-ipguard/ipguard.json
+"bypass_key": "<32 位随机十六进制>"
+```
+
+- 请求带 `X-Guard-Key: <该值>` 时：
+  1. gate 生成的封禁 matcher 会跳过它（片段里是 `not header X-Guard-Key <值>`）；
+  2. `gate-ipguard.py` 也不把这些请求计入速率/日总量统计（日志里的 `gk` 字段等于该值就跳过）。
+- **只免封，不放行别的**：`X-FR` 校验、WAF、应用鉴权照旧。
+- 日志里的 `gk` 字段会记录这个值（gate 上 root 可读）。所以别拿真凭据当 key，用随机串；
+  想轮换就同时改 `ipguard.json` 和客户端，下一次 timer 触发会自动重写片段并 reload。
+
+用法：
+
+```bash
+# curl / 脚本
+curl -H 'X-Guard-Key: <key>' https://hhp.misiai.com/...
+
+# 自己的工具（如 go-online-tools/hhprun）：在发请求处加同一个 header
+# 浏览器：装 Header Editor / ModHeader，给 *.misiai.com / *.hunhepan.com / *.lzpanx.com 加这个 header
+```
+
+实测（gate:3001，用一个永久封禁的 IP 模拟）：
+
+| 请求 | 结果 |
+|---|---|
+| 被封 IP，无 key | 403 Forbidden |
+| 被封 IP + 正确 key | 200（正常返回页面） |
+| 被封 IP + 错误 key | 403 Forbidden |
+| 未封 IP + key | 200（不计数，也不影响别人） |
+
+计数跳过也单独验证过：同一份合成日志里，带 key 的 IP 计数为 `None`（完全不进统计），
+不带 key 的 IP 正常计数。
+
+> 保留的 IP 白名单通道：`/etc/gate-ipguard/whitelist.txt` 与 `whitelist.d/*.txt`
+> （仓库里 `scripts/gate/etc/whitelist.d/10-home-sichuan.txt` 预留了 `116.169.0.0/16` 注释行，
+> 需要按段放行时取消注释即可，但注意它等于放行 65536 个地址）。
+
 ## 会不会误封 Googlebot / Bingbot
 
 **有风险，已经处理掉了。** 搜索类爬虫的抓取速度是由站点容量"自适应"的，大站上持续 1–2 req/s（60–120 次/分钟）并不罕见，正好压在 `rate_per_min: 60` 的阈值上 —— 靠阈值区分"人 / 爬虫"在这里不成立，必须按 IP 段放行。

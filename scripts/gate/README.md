@@ -41,7 +41,17 @@ sudo /usr/local/bin/gate-ipguard.py --unban 1.2.3.4,5.6.7.8
 sudo sed -i 's/"mode": "enforce"/"mode": "dry-run"/' /etc/gate-ipguard/ipguard.json
 ```
 
-配置改动（阈值、模式）在**下一次 timer 触发**时生效，无需重启服务。
+配置改动（阈值、模式、`bypass_key`）在**下一次 timer 触发**时生效，无需重启服务。
+
+## 免封密钥（X-Guard-Key）
+
+`ipguard.json` 里的 `bypass_key` 是一个与 IP 无关的免封通道，适合手机 SIM / 动态 IP 的自有设备：
+
+```bash
+curl -H 'X-Guard-Key: <bypass_key>' https://hhp.misiai.com/...
+```
+
+带这个头的请求既不进统计、也不会被封（`X-FR` 校验仍然要过）。轮换时同时改配置和客户端即可。
 
 ## 注意
 
