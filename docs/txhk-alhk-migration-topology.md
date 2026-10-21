@@ -364,3 +364,55 @@ alhk 日志中抓到过 `upstream 10.77.42.2:3001 duration: 24.16s` 的单请求
 2. 判据不是「alhk 能不能建站」，而是 **alhk 与大陆之间现在有 14–19% 的固定丢包**，任何「alhk → 大陆后端」的站点都会受影响，与 Caddy/WAF/页面大小无关。
 3. 若必须让 alhk 服务大陆后端，可行做法是**绕新加坡中转**（>1s 慢请求从 35% 降到 7%），代价是 +37ms RTT；但直接放 txsp2 仍然最优。
 4. 该丢包率随时间波动（本 session 早期 alhk→gate 曾测得 0%，事故期间 70–75%），疑与阿里云香港侧跨境 QoS/限速有关，需持续观测。
+
+## 最终切换：6 个域名全部回 alhk（2026-10-21 15:25，用户决定）
+
+用户决定把 `lzpanx.com` / `www.lzpanx.com` / `panso.me` / `hunhepan.com` / `www.hunhepan.com` / `api.hunhepan.com` 全部指向 alhk，并且**源站到 gate 的上游一律走公网，不用 WG**。
+
+### 执行
+
+1. alhk Caddyfile：`lzpanx.com, www.lzpanx.com, panso.me` 块的上游
+   `reverse_proxy 10.77.42.2:3006` → **`reverse_proxy 110.40.167.56:3006`**
+   （备份 `/etc/caddy/Caddyfile.before-lzpanx-public-<ts>`；`caddy validate` 通过，`systemctl reload caddy` 成功，运行态配置里 `10.77.42.2` 出现次数降为 0）
+2. DNS：6 条 A 记录 → `47.242.228.248`（保持 CF 代理）
+   - `lzpanx.com`、`www.lzpanx.com`、`panso.me`
+   - `hunhepan.com`、`www.hunhepan.com`、`api.hunhepan.com`
+3. 证书：全部复用 alhk 上已签发的 LE 证书（DNS-01），**无需重新申请**
+
+### 验证（切换后）
+
+alhk 本地 443（`--resolve` 到 127.0.0.1）：6 个域名全部 200。
+
+经 CF（gate 发起）：
+
+| URL | 状态 | 耗时 |
+|---|---|---|
+| `https://lzpanx.com/` | 301 | 1.81s |
+| `https://www.lzpanx.com/` | 200 | 1.43s |
+| `https://panso.me/` | 200 | 4.41s |
+| `https://hunhepan.com/` | 200 | 1.58s |
+| `https://www.hunhepan.com/` | 301 | 0.95s |
+| `https://api.hunhepan.com/` | 200 | 1.97s |
+| `https://jujuso.com/`（未动） | 200 | 1.01s |
+| `https://m14.panso.me/`（未动） | 200 | 0.33s |
+
+WAF 侧 10 分钟内 **0 次拦截、0 个 5xx**。
+
+### 现状与回滚
+
+- alhk 现在承载：`lzpanx.com`(+www)、`panso.me`、`hunhepan.com`(+www/api)、`jujuso.com`(+v4)、`m14.panso.me`(v2ray)
+- alhk 到 gate 的上游全部公网：`:3001`(hunhepan)、`:3006`(lzpanx/panso.me)
+- **WG 两条隧道现在完全没有业务流量**（仅 keepalive），可以随时停用
+- **回滚路径**（保持 CF Full strict，无需改 SSL 模式）：把这 6 条 A 记录改回 `43.160.224.101`（txsp2 上仍有完整 443 站点块和 DNS-01 证书）
+
+### 已知代价（有实测依据）
+
+alhk ↔ 大陆当前 14–19% 丢包，因此这些站点预期 `>1s` 的请求占比明显高于 txsp2：
+
+| 方式 | avg | >1s |
+|---|---|---|
+| alhk 直连大陆后端（现状） | 1.024s | 35% |
+| alhk 经 txsp2 中转 | 0.388s | 7% |
+| txsp2 直连大陆后端（切换前） | 0.823s | 24% |
+
+探针 `scripts/netprobe-report.sh` 里的 `http_alhk_origin` / `http_txsp2_origin` / `cf_live_hunhepan` 三组数据可直接对比，24 小时后再决定是否保留该架构或改用中转。
