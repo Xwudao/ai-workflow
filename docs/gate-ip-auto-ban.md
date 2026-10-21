@@ -143,12 +143,23 @@ curl -H 'X-Guard-Key: <key>' https://hhp.misiai.com/...
 
 1. `gate-ipguard.py` 的白名单现在支持目录：`/etc/gate-ipguard/whitelist.txt` + `/etc/gate-ipguard/whitelist.d/*.txt`。
 2. `whitelist.d/bot-allowlist.txt` 由 `scripts/gate/refresh-bot-allowlist.sh` 自动生成，来源是官方列表：
-   - `googlebot.json`（Googlebot）
-   - `special-crawlers.json`（AdsBot 等）
+   - `common-crawlers.json`（Googlebot 等；2026-10 前叫 `googlebot.json`）
+   - `special-crawlers.json`（AdsBot / Mediapartners-Google（AdSense）/ GoogleOther 等）
+   - 注：Google 已把段文件从 `/static/search/apis/ipranges/` 迁到 `/static/crawling/ipranges/`
+     （旧路径 301）。脚本直接用新路径，并用 `curl -f` + “前缀数 < 300 就拒绝生成”避免
+     把 404 的 HTML 错误页或残缺列表当成白名单推上去。
    - `bingbot.json`（Bingbot）
    - 再加 Applebot 的 `17.0.0.0/8`（Apple 官方文档写明）
    当前共 618 条前缀 + 内置 10 条 = 628 条白名单。
 3. 白名单命中的 IP 在判定前直接跳过 —— 离线验证：把 Googlebot（`66.249.68.167`）和 Bingbot（`40.77.167.143`）的计数灌到 500 次/分钟，`decide()` 依然不封；同时喂一个爬虫 IP（`185.218.5.31`）则正常封 30 分钟。
+
+**AdSense 是覆盖的**（2026-10-21 核查）：AdSense 的内容抓取用 `Mediapartners-Google`，它的段就在
+`special-crawlers.json` 里；实测 gate 全量日志里 23 次 CDN 链路的 `Mediapartners-Google` 请求
+（`66.249.87–92.x` 等）全部命中白名单，封禁表里也没有任何 Google 段 IP。两点容易搞混：
+
+- AdSense 的**广告投放**（素材/统计）是用户浏览器直连 Google，根本不经过 gate，与本策略无关；
+- 白名单是**按 IP** 判的，UA 伪造成 `Mediapartners-Google` 没有任何好处 —— 日志里就有伪装 UA
+  扫 `/infra/terraform.tfvars` 的扫描器，照样按 IP 计数、照样会被封。
 
 **故意没放进去的**：GPTBot / ClaudeBot / CCBot / Bytespider / PetalBot / AhrefsBot / SemrushBot 等 AI 训练与 SEO 分析爬虫 —— 量大、通常也不希望被爬，该封就封。要放行某个只需在 `/etc/gate-ipguard/whitelist.txt` 里加一行 CIDR（或自己写个 `whitelist.d/xxx.txt`）。
 

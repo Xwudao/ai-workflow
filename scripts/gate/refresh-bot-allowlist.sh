@@ -11,9 +11,13 @@
 #   ./refresh-bot-allowlist.sh --dry-run  # 只生成到本地 etc/bot-allowlist.txt
 #
 # 建议每月跑一次（Google/Bing 的段偶尔会加新的）。来源：
-#   https://developers.google.com/static/search/apis/ipranges/googlebot.json
-#   https://developers.google.com/static/search/apis/ipranges/special-crawlers.json
+#   https://developers.google.com/static/crawling/ipranges/common-crawlers.json   # 原 googlebot.json
+#   https://developers.google.com/static/crawling/ipranges/special-crawlers.json
 #   https://www.bing.com/toolbox/bingbot.json
+#
+# 2026-10-21：Google 把 IP 段 JSON 从 /static/search/apis/ipranges/ 迁到 /static/crawling/ipranges/
+# （旧路径 301；googlebot.json 同时改名 common-crawlers.json）。下面的地址直接用新路径，
+# 避免哪天重定向被撤。fetch 用 curl -f：HTTP 4xx/5xx 直接失败，不会把 HTML 错误页写成白名单。
 
 set -euo pipefail
 
@@ -25,20 +29,24 @@ DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
 fetch() { # url outfile
-  curl -sL --max-time 30 "$1" -o "$2"
-  [ -s "$2" ] || { echo "!!! 下载失败: $1" >&2; return 1; }
+  if ! curl -fsSL --max-time 30 "$1" -o "$2"; then
+    echo "!!! 下载失败: $1" >&2
+    return 1
+  fi
+  [ -s "$2" ] || { echo "!!! 下载为空: $1" >&2; return 1; }
 }
 
 echo "==> 下载官方 IP 段"
-fetch "https://developers.google.com/static/search/apis/ipranges/googlebot.json" "$TMP/googlebot.json"
-fetch "https://developers.google.com/static/search/apis/ipranges/special-crawlers.json" "$TMP/special.json"
+fetch "https://developers.google.com/static/crawling/ipranges/common-crawlers.json" "$TMP/common.json"
+fetch "https://developers.google.com/static/crawling/ipranges/special-crawlers.json" "$TMP/special.json"
 fetch "https://www.bing.com/toolbox/bingbot.json" "$TMP/bingbot.json"
 
 python3 - "$TMP" "$OUT" <<'PY'
-import json, sys, datetime as dt
+import json, sys, datetime as dt, ipaddress
+MIN_TOTAL = 300        # 低于这个数说明上游改了结构/被截断，宁可不生成也不推个残缺白名单
 tmp, out = sys.argv[1], sys.argv[2]
-rows = [("Googlebot", f"{tmp}/googlebot.json"),
-        ("Google special crawlers (AdsBot 等)", f"{tmp}/special.json"),
+rows = [("Google common crawlers (Googlebot 等)", f"{tmp}/common.json"),
+        ("Google special crawlers (AdsBot / Mediapartners-Google 等)", f"{tmp}/special.json"),
         ("Bingbot", f"{tmp}/bingbot.json")]
 lines = ["# 自动生成，勿手工编辑（scripts/gate/refresh-bot-allowlist.sh）",
          "# 生成时间: %s" % dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -48,19 +56,24 @@ for label, path in rows:
     try:
         data = json.load(open(path))
     except Exception as exc:
-        print("!!! 解析失败 %s: %s" % (path, exc), file=sys.stderr)
-        continue
+        sys.exit("!!! 解析失败 %s: %s（不生成，避免推残缺白名单）" % (path, exc))
+    prefixes = data.get("prefixes") or []
+    if not prefixes:
+        sys.exit("!!! %s 里没有 prefixes，格式变了？" % path)
     lines.append("# %s" % label)
-    for prefix in data.get("prefixes", []):
+    for prefix in prefixes:
         for key in ("ipv4Prefix", "ipv6Prefix"):
             value = prefix.get(key)
             if value:
+                ipaddress.ip_network(value)     # 非法 CIDR 直接抛异常退出
                 lines.append(value)
                 total += 1
     lines.append("")
 # Applebot 官方文档说明使用 17.0.0.0/8
 lines += ["# Applebot", "17.0.0.0/8", ""]
 total += 1
+if total < MIN_TOTAL:
+    sys.exit("!!! 只解析到 %d 条前缀（< %d），疑似上游变更，不生成" % (total, MIN_TOTAL))
 open(out, "w").write("\n".join(lines))
 print("==> 生成 %s（%d 条前缀）" % (out, total))
 PY
