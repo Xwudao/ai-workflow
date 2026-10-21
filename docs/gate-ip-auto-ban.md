@@ -1,6 +1,6 @@
 # gate 按阈值自动封禁（IP 白名单 + 超阈值拉黑）
 
-2026-10-21 实施，**当前处于 dry-run（只记录、不封）**。
+2026-10-21 实施，同日 18:57 切到 **enforce**（已生效），截至 20:44 共封禁 56 个 IP（永久 48 + 临时 8）。
 
 ## 为什么不能按"来源 IP"封
 
@@ -25,7 +25,7 @@ gate 看到的 IP 有两种，`tcpdump` + 日志实测：
 | 路径 | 作用 |
 |---|---|
 | `/usr/local/bin/gate-ipguard.py` | 守护脚本（源码 `scripts/gate/gate-ipguard.py`，部署用 `scripts/gate/install.sh`） |
-| `/etc/gate-ipguard/ipguard.json` | 阈值与模式（当前 `"mode": "dry-run"`） |
+| `/etc/gate-ipguard/ipguard.json` | 阈值与模式（当前 `"mode": "enforce"`） |
 | `/etc/gate-ipguard/whitelist.txt` | 手工额外白名单（IP/CIDR，一行一个） |
 | `/etc/gate-ipguard/whitelist.d/*.txt` | 追加白名单目录；`bot-allowlist.txt` 由 `refresh-bot-allowlist.sh` 生成 |
 | `/etc/caddy/blocks/banned.caddyfile` | **生成**的封禁片段（enforce 模式才写） |
@@ -45,7 +45,9 @@ respond @banned_cf "Forbidden" 403
 
 为什么是 `header_regexp` 而不是 `header`：Caddy 的 `header` 匹配器**一个 matcher 只能带一个值**
 （多值直接报 `malformed header matcher: expected field`），几千条 IP 不现实。`header_regexp` 走 RE2，
-`ip1|ip2|...` 会编译成自动机，实测 3000 条时单请求耗时与 1 条无差别（回环基线 0.388ms vs 0.380ms）。
+`ip1|ip2|...` 无回溯、无灾难性回溯，成本随条目数**线性**增长但斜率很小：当前 56 条实测与空 matcher
+无差别（0.270ms vs 0.266ms），3000 条（`max_bans` 上限）约 +0.17ms，详见
+[性能：条目数 vs 单请求耗时](#性能条目数-vs-单请求耗时2026-10-21-实测)。
 
 > 也试过 `client_ip` 匹配器 + `servers { trusted_proxies static 0.0.0.0/0 ::/0; client_ip_headers Eo-Connecting-Ip Cf-Connecting-Ip }`：
 > 功能上更优雅（CIDR 基数树、天然支持 IPv6），但 `trusted_proxies` 是**全局**设置，会让 `remote_ip` 匹配器
@@ -58,7 +60,7 @@ respond @banned_cf "Forbidden" 403
 
 ```json
 {
-  "mode": "dry-run",
+  "mode": "enforce",
   "rate_per_min": 60,
   "rate_minutes": 3,
   "daily_total": 2000,
@@ -193,15 +195,60 @@ grep -c . /etc/caddy/blocks/banned.caddyfile          # 行数（IP 都在同一
   → `403 Forbidden`（走 `Eo-Connecting-Ip` 和 `Cf-Connecting-Ip` 两条路都验证过）；换成未封 IP → 200。
 - 上线即时效果：2026-10-21 18:57 切 enforce 后 1 分钟内就有 26 条封禁生效，日志里出现爬虫
   `185.218.5.31 - "POST /open/search/disk" 403 9` 之类的记录。
-- `header_regexp` 3000 条的性能：临时实例压测（回环 300 次）基线 0.388ms / 未命中 0.377ms / 命中 0.380ms。
+- `header_regexp` 各档条目数的性能：见下方专节（2026-10-21 重测，早期那组 `0.388ms / 0.377ms / 0.380ms`
+  分辨率不够，把约 0.17ms 的真实差异盖住了）。
 - dry-run 首跑（回填当前日志里的最近 30 分钟）：判定 20 个 IP 越线，日志流水正常，未 reload。
 - 定时器每分钟执行，单次 CPU ≈ 0.2s（`systemctl show gate-ipguard.service -p CPU`）。
+
+## 性能：条目数 vs 单请求耗时（2026-10-21 实测）
+
+gate 上临时起 `:3999` 实例（`admin off`、loopback、HTTP/1.1 keepalive，每组 400 次、去掉前 3 次预热），
+Caddy v2.11.4。基线是「同一份 Caddyfile，去掉封禁 matcher」。绝对数含 python `http.client`
+客户端开销 ≈0.26ms，**看差值**。
+
+| 片段条目数 | 未命中均值 | 相对基线 | 命中均值 | RSS | 配置加载（`caddy run` 到可连接） |
+|---|---|---|---|---|---|
+| 0（基线） | 0.266 ms | — | — | 44.3 MB | 61 ms |
+| 56（当前线上） | 0.270 ms | +0.004 ms | 0.268 ms | 44.7 MB | 41 ms |
+| 500 | 0.280 ms | +0.014 ms | 0.296 ms | 46.8 MB | 41 ms |
+| 2000 | 0.378 ms | +0.11 ms | 0.409 ms | 53.3 MB | 61 ms |
+| 3000（`max_bans` 上限） | 0.437 ms | +0.17 ms | 0.457 ms | 60.4 MB | 122 ms |
+| 5000 | 0.574 ms | +0.31 ms | 0.615 ms | 65.0 MB | 102 ms |
+| 20000 | 1.595 ms | +1.33 ms | 1.629 ms | 107.9 MB | 287 ms |
+
+结论：
+
+1. **不是「与 1 条无差别」，而是线性增长 ≈ 0.06 µs/条/请求**。原因：Caddy `header_regexp` 用 Go `regexp`，
+   语法是 RE2（无回溯），但 Go **没有实现 DFA 缓存**，匹配是按字节做 NFA 线程表模拟；
+   `^(ip1|ip2|…)$` 只有公共前缀被 `syntax.simplify` 合并，随机 IP 几字节后就分叉，线程表规模 ~O(N)。
+2. **正常请求要扫两遍**：`Eo-Connecting-Ip` 与 `Cf-Connecting-Ip` 是两条独立 matcher（matcher 集合是 AND，
+   写不出 OR 两个 header），两个都没命中的请求两遍成本都付。3000 条满额 ≈ **0.34 ms/请求**。
+3. 实际影响可忽略：143 万请求/天 ≈ 16.5 QPS，3000 满额时 `16.5 × 0.34ms ≈ 5.6ms/s`，约 **0.6% 单核**；
+   即使 QPS 涨到 500 也只吃 17% 单核。
+4. 内存才是硬约束：gate 只有 945MB（已用 ~650MB），3000 条 +16MB 无压力，2 万条要 +60MB。所以
+   `max_bans: 3000` 不只是防片段膨胀，也是内存保险 —— 脚本按 `until` 倒序截断（`gate-ipguard.py` 第 303 行）。
+5. reload 成本：3000 条配置加载 ~100ms，且只在封禁集合变化时触发，`caddy reload` 不断连接。
+6. 线上实测（`:3001` 真实配置 + 已封 IP，56 条）：403 路径 **0.371 ms**、p99 0.6ms。
+
+真要把封禁量放到万级，改用 `map` 从文件查表（哈希 O(1)，代价与条目数无关）：
+
+```caddyfile
+map {http.request.header.Eo-Connecting-Ip} {banned_eo} {
+	import /etc/caddy/blocks/banmap_eo.txt   # 每行: 1.2.3.4 1
+	default ""
+}
+@banned_eo expression {banned_eo} != ""
+```
+
+代价是同步改 `gate-ipguard.py` 的片段生成、把 `X-Guard-Key` 豁免挪进 `expression`、并重新验证 CDN 链路。
+当前只有几十条，**没到需要动的程度**，等常态超过 1000 条再考虑。
 
 ## 已知局限 / 注意
 
 1. 被封的 IP 仍会经过 EdgeOne / Cloudflare 到达 gate（流量在 CDN 已经产生），只是源站立刻 403。想真正省流量得在 EdgeOne/CF 侧也封（EdgeOne 有 IP 黑名单规则，免费版有配额限制）。
 2. 封禁靠请求头，若某天把 EdgeOne 的回源 Host/头规则改坏，所有流量都会"看起来没有 IP"，此时守护脚本会停止计数（不会误封），但也不会封人。
-3. `banned.caddyfile` 里所有 IP 在一行，条目上限 `max_bans`（3000）。
+3. `banned.caddyfile` 里所有 IP 在一行，条目上限 `max_bans`（3000）。匹配成本随条目数线性增长
+   （≈0.06 µs/条/请求，且正常请求要扫 eo/cf 两遍），上限同时是内存保险，见上方性能专节。
 4. 脚本用 `caddy reload` 应用变更；reload 失败会记日志并保留旧片段（`banned.caddyfile` 已经是新内容，下次成功时生效）。
 
 ## 回滚
