@@ -416,3 +416,29 @@ alhk ↔ 大陆当前 14–19% 丢包，因此这些站点预期 `>1s` 的请求
 | txsp2 直连大陆后端（切换前） | 0.823s | 24% |
 
 探针 `scripts/netprobe-report.sh` 里的 `http_alhk_origin` / `http_txsp2_origin` / `cf_live_hunhepan` 三组数据可直接对比，24 小时后再决定是否保留该架构或改用中转。
+
+## 最终回迁 txsp2（2026-10-22，基于 24h netprobe 数据）
+
+24h 探针（2026-10-21 15:00 ～ 10-22 11:00 CST，每 5 分钟一轮，各 241 轮）结论：
+
+| 链路 | ICMP 丢包 24h | 晚高峰 15:00–23:30 | 备注 |
+|---|---|---|---|
+| **alhk ↔ gate** | **10.4% / 11.7%**（双向） | **15–47%** | 仅 24%/13% 的轮次为 0%，≥10% 的轮次占 27%/35% |
+| alhk ↔ txsp2 | 1.7% / 1.5% | ≈0% | 1.7% 几乎全部来自 19:00 那次 alhk 整机出口异常（同期 alhk→1.1.1.1 也掉 20%） |
+| **txsp2 ↔ gate** | **0.2% / 0.0%** | **0%** | 96% 的轮次完全 0 丢包 |
+
+- 丢包拐点：alhk↔gate 丢包 <10% 时页面 med 0.23–0.35s、>1s 15–27%；10–20% 时 med 1.14s、>1s 54%；>20% 时 med 1.62s、>1s 63%。
+- 同口径 HTTP（gate 发起，最近 6h）：`http_alhk_origin` med 0.223s / >1s 17%；`http_txsp2_origin` med 0.339s / >1s 6%；晚高峰分别为 61% 与 16%。
+- `cf_live_*` 的 1.0–1.2s 主要来自 gate→Cloudflare（实测 colo=LAX，RTT≈260ms），不能用来判断 alhk 源站质量。
+
+### 处置
+
+`lzpanx.com` / `www.lzpanx.com` / `panso.me` / `hunhepan.com` / `www.hunhepan.com` / `api.hunhepan.com`
+均为 **A 43.160.224.101（txsp2），CF proxied=true**，与 `m15.panso.me` 一致；核对时已处于目标状态，
+无需再执行 `cloudctl dns ensure`（如后续需回滚，反向改回 `47.242.228.248` 即可）。
+
+- 复核（gate 发起）：`www.lzpanx.com`、`hunhepan.com`、`api.hunhepan.com`、`panso.me` 均 200。
+- `jujuso.com` / `v4.jujuso.com` / `m14.panso.me` 仍在 alhk（DNS-only），未在本次调整范围。
+- alhk 上 6 个站点块与证书保留为待命配置；WG 两条隧道仍无业务流量。
+- 探针侧注意：gate 的 `http_gate_direct` 自 2026-10-21 17:10 CST 起因新增 X-FR 降噪规则全部返回 403，
+  该组数据已失效（需带 `X-FR` 才能测得真实直连）；`cf_live_*` 应配合 CF 基线探针解读。

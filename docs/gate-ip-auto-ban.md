@@ -82,6 +82,18 @@ respond @banned_cf "Forbidden" 403
 - 计数只取「带合法 `X-FR`（CDN/入口机链路）且带 `eoip`/`cfip`」的请求 → 直连扫描器（已被 403）不参与计数，也不会误封 CDN 节点。
 - 白名单内置：`127/8`、`::1`、`10/8`、`172.16/12`、`192.168/16`、`100.64/10`、`fd00::/8`、gate `110.40.167.56`、txsp2 `43.160.224.101`、alhk `47.242.228.248`。
 
+## 手工放行记录
+
+| 日期 | IP | 方式 | 说明 |
+|---|---|---|---|
+| 2026-10-22 | `1.14.49.179` | `/etc/gate-ipguard/whitelist.txt` | 曾因 `daily=3248` 被临时封 30 分钟（strikes=1）；放行时先加白名单，再 `--unban` 清掉封禁记录/strikes/日总量/分钟桶，旧文件备份在 gate 的 `/root/gate-whitelist-bak-20261022/`。仓库内 `scripts/gate/etc/whitelist.txt` 已同步。 |
+| 2026-10-22 | `175.152.177.9` | 仅 `--unban`（未加白名单） | 16:20 因 `daily=2011`（阈值 2000）被临时封 30 分钟（strikes=1）。是真实用户（Chrome/Windows+Mac+Android，`host=panso.pro`，登录态访问 admin 与 `/auth/v1/inbox/*`），非扫描器；每分钟轮询 `inbox/messages` + `inbox/summary` 各一次，全天累计超过日总量。解封后验证 200。**若继续这样用会再次触发日总量**，长期方案是 `X-Guard-Key` 或加白名单。 |
+
+放行后验证：`in_whitelist()` 命中、`banned.caddyfile` 里 `grep -Fc '1\.14\.49\.179'` 为 0、
+`curl -H 'X-FR: hunhepan.com' -H 'EO-Connecting-IP: 1.14.49.179' http://127.0.0.1:3001/` 返回 200。
+
+> 注意：白名单只在**判定前**跳过，不会自动摘掉已有封禁；已封的 IP 要先加白名单再 `--unban`。
+
 ## 自己的设备怎么免封（X-Guard-Key）
 
 手机 SIM / 家宽出口 IP 会一直变，按 IP 白名单维护不过来（一个 `/16` 就有 6 万多个地址，
@@ -306,3 +318,21 @@ sudo caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo cp -a /root/xfr-rollout-20261021/Caddyfile.before-ipguard /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
+
+## 前台 inbox 轮询已收敛（2026-10-22）
+
+`175.152.177.9` 那次 `daily=2011` 的根因不是后台，而是 **go-hunhepan 前台的站内信轮询**：
+`/auth/v1/inbox/summary` 与 `/auth/v1/inbox/messages` 两条各自 60s，登录用户只要前台页面可见就是
+**2 次/分钟 = 2880 次/天**，连续开约 16.7 小时必然撞上 `daily_total: 2000`。
+
+改动（`go-hunhepan/web`，未动后台接口）：
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 查询条数 | summary、messages 两条独立 query | 合并为一条 `useInboxOverview`（内部 `Promise.all`） |
+| 轮询条件 | 常开，与面板无关 | **仅铃铛面板打开时轮询**（`refetchInterval: panelOpen ? 5min : false`） |
+| 间隔 | 60s | **5 分钟**（`INBOX_POLL_INTERVAL_MS`） |
+| 面板关闭时 | 每 60s 打两次 | 只在挂载 / 窗口聚焦 / 读信删除后各取一次 |
+
+涉及文件：`web/src/hooks/useInboxSummary.ts`、`web/src/pages/front/components/InboxBell.tsx`。
+普通用户前台常驻请求量因此从 ~2880/天 降到接近 0。后台页面（系统任务 3s 等）未改，仍有撞阈值风险。
