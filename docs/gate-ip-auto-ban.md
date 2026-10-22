@@ -87,6 +87,7 @@ respond @banned_cf "Forbidden" 403
 | 日期 | IP | 方式 | 说明 |
 |---|---|---|---|
 | 2026-10-22 | `1.14.49.179` | `/etc/gate-ipguard/whitelist.txt` | 曾因 `daily=3248` 被临时封 30 分钟（strikes=1）；放行时先加白名单，再 `--unban` 清掉封禁记录/strikes/日总量/分钟桶，旧文件备份在 gate 的 `/root/gate-whitelist-bak-20261022/`。仓库内 `scripts/gate/etc/whitelist.txt` 已同步。 |
+| 2026-10-22 | 30 个普通 IP（批量） | 先 `--unban`，同日 17:51 对其中 29 个采集器重新封禁 | 复核 `daily=` 封禁，详见下文《日总量封禁 IP 复核与解封（2026-10-22）》。29 个实为住宅 IP 采集器，已重新封禁；仅 `2408:8207:c05:4b01:14be:3706:b118:ee18` 为真实用户，保持解封。 |
 | 2026-10-22 | `175.152.177.9` | 仅 `--unban`（未加白名单） | 16:20 因 `daily=2011`（阈值 2000）被临时封 30 分钟（strikes=1）。是真实用户（Chrome/Windows+Mac+Android，`host=panso.pro`，登录态访问 admin 与 `/auth/v1/inbox/*`），非扫描器；每分钟轮询 `inbox/messages` + `inbox/summary` 各一次，全天累计超过日总量。解封后验证 200。**若继续这样用会再次触发日总量**，长期方案是 `X-Guard-Key` 或加白名单。 |
 
 放行后验证：`in_whitelist()` 命中、`banned.caddyfile` 里 `grep -Fc '1\.14\.49\.179'` 为 0、
@@ -336,3 +337,67 @@ sudo systemctl reload caddy
 
 涉及文件：`web/src/hooks/useInboxSummary.ts`、`web/src/pages/front/components/InboxBell.tsx`。
 普通用户前台常驻请求量因此从 ~2880/天 降到接近 0。后台页面（系统任务 3s 等）未改，仍有撞阈值风险。
+
+## 日总量封禁 IP 复核与解封（2026-10-22）
+
+2026-10-22 17:07 复核 `daily_total: 2000` 这条线封掉的 IP，判断是否为「普通用户被误封」。
+
+**方法**：`state.json` 里 `reason` 以 `daily=` 开头的共 **127** 个；逐个查 `ip-api.com`（`hosting`/`proxy`）+ `whois` 的 `netname`/`descr` + 反查 PTR 判断机房/IDC，再用 gate 的 `/var/log/caddy/*.log` 看真实请求行为。判定标准：`hosting=true` 或 `whois` 归属「Network Technology / IDC / Cloud / 机房公司」的一律算机房；归属省电信/联通/移动、境外消费级 ISP（如 OPTAGE、Superloop、PCCW IMS）的算普通 IP。
+
+**结果**：
+
+| 类别 | 数量 | 处置 |
+|---|---|---|
+| 机房 / VPS / VPN（`hosting=true`） | 67 | 保持封禁 |
+| `hosting=false` 但 `whois` 实为 IDC/机房公司 | 30 | 保持封禁 |
+| 普通 IP（消费级 ISP） | 30 | **解封**（`--unban`，未加白名单） |
+
+后 30 个里，只有 `2408:8207:c05:4b01:14be:3706:b118:ee18` 是**真实用户**（日志里有 `GET /search`、`GET /doc/...` 的页面浏览）；其余 29 个的行为全是 `POST /v1/search/disk` / `POST /open/search/disk`，**没有任何页面浏览**，UA 是伪装成 `Chrome/91` 的脚本，属于「用住宅/移动 IP 做出口的分布式采集器」。
+
+| IP | 属地 | ISP | 行为判定 |
+|---|---|---|---|
+| `115.70.61.103` | Australia Melbourne | SUPERLOOP (AUSTRALIA) PTY LTD | 采集器 |
+| `182.200.127.192` | China Shenyang | Chinanet | 采集器 |
+| `117.10.145.224` | China Tianjin | CNC Group CHINA169 Tianjin Province Network | 采集器 |
+| `121.238.93.12` | China Nanjing | Chinanet | 采集器 |
+| `183.211.82.83` | China Suzhou | China Mobile communications corporation | 采集器 |
+| `59.172.116.85` | China Wuhan | China Telecom | 采集器 |
+| `2408:8207:c05:4b01:14be:3706:b118:ee18` | China Beijing | China Unicom | **真实用户** |
+| `183.23.192.53` | China Shenzhen | Chinanet | 采集器 |
+| `39.144.155.124` | China Wuxi | China Mobile Communications Corporation | 未确认 |
+| `106.41.70.135` | China Qingyuan | Chinanet | 未确认 |
+| `113.80.90.231` | China Guangzhou | Chinanet | 采集器 |
+| `115.204.129.186` | China Hangzhou | Chinanet | 采集器 |
+| `171.8.92.28` | China Guancheng | Chinanet | 未确认 |
+| `59.190.126.195` | Japan Osaka | OPTAGE Inc. | 采集器 |
+| `112.38.75.73` | China Jinan | China Mobile Communications Group Co., Ltd | 未确认 |
+| `2409:8a20:50f2:8a00:befd:cff:fecc:b9da` | China Suzhou | China Mobile Communications Corporation | 未确认 |
+| `112.81.128.250` | China Suzhou | China Unicom CHINA169 Jiangsu Province Network | 采集器 |
+| `39.149.235.124` | China Guancheng | China Mobile Communications Group Co., Ltd | 未确认 |
+| `112.20.126.49` | China Nanjing | China Mobile communications corporation | 未确认 |
+| `116.176.124.41` | China Jinrongjie | China Unicom CHINA169 Network | 采集器 |
+| `2404:c800:9160:bf2:eee8:98ec:5a0f:1fcc` | Hong Kong Central | PCCW IMS Limited | 采集器 |
+| `125.119.40.227` | China Hangzhou | Chinanet | 未确认 |
+| `117.174.18.42` | China Chengdu | China Mobile communications corporation | 采集器 |
+| `2408:8274:60d:9b00:638c:6a63:81e0:232b` | China Jinrongjie | China Unicom Network | 采集器 |
+| `27.8.138.199` | China Chongqing | China Unicom Chongqing Province Network | 采集器 |
+| `113.56.39.87` | China Wuhan | CNC Group CHINA169 Hubei Province Network | 采集器 |
+| `120.229.87.28` | China Shenzhen | China Mobile communications corporation | 未确认 |
+| `222.131.222.154` | China Beijing | China Unicom Beijing Province Network | 采集器 |
+| `60.179.224.18` | China Ningbo | Chinanet | 采集器 |
+| `2404:c800:9160:bd7:1c99:4c85:22d8:b7b7` | Hong Kong Central | PCCW IMS Limited | 采集器 |
+
+**关键发现**：这些采集器会在同一住宅网段内**轮换 IP**，单独解封某个地址没有意义。复核过程中日志就抓到同段新地址继续打：`2408:8274:60d:9b00:88e5:1d43:80d1:5910`（与已封 `…:638c:6a63:81e0:232b` 同 `/64`）、`113.80.93.109`（与 `113.80.90.231` 同段）。也就是说 `daily_total: 2000` 这条线本身没有在误伤真实用户，命中的是采集网络。
+
+**备份**（gate 上，root）：
+
+| 文件 | 说明 |
+|---|---|
+| `/root/gate-state-bak-20261022.json` | 解封前 `state.json` 快照 |
+| `/root/banned.caddyfile.bak-20261022` | 解封前封禁片段快照 |
+
+解封后校验：`banned.caddyfile` 里 30 个 IP 全部 `grep -Fc` 为 0；`curl -H 'X-FR: hunhepan.com' -H 'EO-Connecting-IP: 182.200.127.192' http://127.0.0.1:3001/` → 200，未解封的 `64.90.17.103` / `185.218.5.31` → 403。封禁数 159 → 132。
+
+> 复核结论：**29 个普通 IP 实际是采集器，已于 17:51 全部重新封禁**（在 `state.json` 里恢复原 `bans`/`strikes`，重写片段并 `caddy reload`，封禁数 132 → 165；审计记录已写入 `/var/log/gate-ipguard.log`）。真实用户只有 1 个（`2408:8207:c05:4b01:14be:3706:b118:ee18`），保持解封；若它继续高频访问仍会再次触发 `daily_total`，长期放行应使用 `X-Guard-Key` 或加白名单。
+
+重新封禁后校验：29 个 IP 全部回到 `banned.caddyfile`；`curl -H 'X-FR: hunhepan.com' -H 'EO-Connecting-IP: 27.8.138.199' http://127.0.0.1:3001/` → 403，真实用户 → 200。
