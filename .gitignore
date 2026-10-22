@@ -24,3 +24,7 @@ build/
 ssh-backup-*/
 tmp_ssh_ed25519*
 
+# local scratch / analysis output
+tmp_ipcheck/
+
+
