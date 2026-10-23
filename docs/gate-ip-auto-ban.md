@@ -2,6 +2,9 @@
 
 2026-10-21 实施，同日 18:57 切到 **enforce**（已生效），截至 20:44 共封禁 56 个 IP（永久 48 + 临时 8）。
 
+> 日志格式、现有 Python 实现逐段说明，以及「用 Go 常驻进程重写」的完整 prompt，见
+> [`docs/gate-ipguard-go-prompt.md`](./gate-ipguard-go-prompt.md)。
+
 ## 为什么不能按"来源 IP"封
 
 gate 看到的 IP 有两种，`tcpdump` + 日志实测：
